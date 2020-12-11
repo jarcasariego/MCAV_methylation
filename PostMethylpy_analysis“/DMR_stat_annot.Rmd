@@ -1,0 +1,754 @@
+---
+title: "DMR_stats_annot"
+author: "Javier Rodriguez Casariego"
+date: "10/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load libraries
+```{r}
+library(data.table)
+library(gplots)
+library(ggplot2) #install.packages('ggplot2')
+library(dplyr)
+library(broom)
+library(RColorBrewer)
+library(egg) #install.packages('egg')
+library(purrr)
+library(nlme)
+library(vegan)
+```
+
+# Part 1:  Filter methylated regions for regions that have coverage in 75% of samples per group
+
+read in data
+```{r}
+#Csymb_alltreat_DMR <- fread('DMR_files/Csymb_alltreat_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+#Dsymb_alltreat_DMR <- fread('DMR_files/Dsymb_alltreat_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+#Control_allSymb_DMR <- fread('DMR_files/Control_SymbComp_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+#Heated_allSymb_DMR <- fread('DMR_files/Heated_Symb_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+allsamples_DMR <- fread('DMR_files/-1.2alignment/alltreat_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+meta_data <- read.csv("Treatment_metadata.csv", stringsAsFactors = FALSE)
+colnames(meta_data)[1] <- "Sample.ID"
+
+
+```
+
+loop through tables and keep only lines where up to one sample contains NA for % methylation
+```{r}
+## For Csymb all treat DMR table
+#df <- data.frame() #create empty data frame to bind filtered rows into
+#for(i in (1:nrow(Csymb_alltreat_DMR))){
+  #control <- Csymb_alltreat_DMR[i,7:11] #define columns from the category Day 0
+  #heated <- Csymb_alltreat_DMR[i,12:18] #define columns from the category Day 10
+    #if(length(which(is.na(control))) < 2 & length(which(is.na(heated))) < 2){
+  #df <- rbind(df,Csymb_alltreat_DMR[i,]) #conditional statement: if less than 2 sameples/category have NA for % methylation bind the whole row to the new dataframe
+#  }
+#}
+#save df as a specific variable
+#Csymb_all_DMR <- df
+
+## For Dsymb all treat DMR table
+#df <- data.frame() #create empty data frame to bind filtered rows into
+#for(i in (1:nrow(Csymb_alltreat_DMR))){
+  #control <- Dsymb_alltreat_DMR[i,7:12] #define columns from the category Day 0
+  #heated <- Dsymb_alltreat_DMR[i,13:18] #define columns from the category Day 10
+    #if(length(which(is.na(control))) < 2 & length(which(is.na(heated))) < 2){
+  #df <- rbind(df,Dsymb_alltreat_DMR[i,]) #conditional statement: if less than 2 sameples/category have NA for % methylation bind the whole row to the new dataframe
+  #}
+#}
+#save df as a specific variable
+#Dsymb_all_DMR <- df
+
+## For Control all symb DMR table
+#df <- data.frame() #create empty data frame to bind filtered rows into
+#for(i in (1:nrow(Control_allSymb_DMR))){
+  #C_symb <- Control_allSymb_DMR[i,7:11] #define columns from the category Day 0
+  #D_symb <- Control_allSymb_DMR[i,12:17] #define columns from the category Day 10
+    #if(length(which(is.na(C_symb))) < 2 & length(which(is.na(D_symb))) < 2){
+  #df <- rbind(df,Control_allSymb_DMR[i,]) #conditional statement: if less than 2 sameples/category have NA for % methylation bind the whole row to the new dataframe
+  #}
+#}
+#save df as a specific variable
+#Control_all_DMR <- df
+
+
+## For Heated all symb DMR table 
+#df <- data.frame() #create empty data frame to bind filtered rows into
+#for(i in (1:nrow(Heated_allSymb_DMR))){
+  #C_symb <- Heated_allSymb_DMR[i,7:11] #define columns from the category Day 0
+  #D_symb <- Heated_allSymb_DMR[i,12:17] #define columns from the category Day 10
+    #if(length(which(is.na(C_symb))) < 2 & length(which(is.na(D_symb))) < 2){
+  #df <- rbind(df,Heated_allSymb_DMR[i,]) #conditional statement: if less than 2 sameples/category have NA for % methylation bind the whole row to the new dataframe
+  #}
+#}
+#save df as a specific variable
+#Heated_all_DMR <- df
+
+## For all samples DMR table 
+df <- data.frame() #create empty data frame to bind filtered rows into
+for(i in (1:nrow(allsamples_DMR))){
+  Cc <- allsamples_DMR[i,7:11] #define columns from the category CC
+  Ch <- allsamples_DMR[i,12:18] #define columns from the category CH
+  Dc <- allsamples_DMR[i,19:24] #define columns from the category BC
+  Dh <- allsamples_DMR[i,25:30] #define columns from the category BH
+    if(length(which(is.na(Cc))) < 2 & length(which(is.na(Ch))) < 2 & length(which(is.na(Dc))) < 2 & length(which(is.na(Dh))) < 2){
+  df <- rbind(df,allsamples_DMR[i,]) #conditional statement: if less than 2 samples/category have NA for % methylation bind the whole row to the new dataframe
+  }
+}
+#save df as a specific variable
+all_DMR <- df
+```
+
+# Part 2: Run group statistics on regions to find regions that are significantly different among groups
+
+Make a unique ID column 
+```{r}
+#for all sample comparison
+#Csymb_all_DMR$ID <- paste(Csymb_all_DMR$`#chr`,":",Csymb_all_DMR$start,"-",Csymb_all_DMR$end, sep = "")
+#Csymb_all_DMR$ID <- gsub("__.*__.*:",":",Csymb_all_DMR$ID)
+#Dsymb_all_DMR$ID <- paste(Dsymb_all_DMR$`#chr`,":",Dsymb_all_DMR$start,"-",Dsymb_all_DMR$end, sep = "")
+#Dsymb_all_DMR$ID <- gsub("__.*__.*:",":",Dsymb_all_DMR$ID)
+#Heated_all_DMR$ID <- paste(Heated_all_DMR$`#chr`,":",Heated_all_DMR$start,"-",Heated_all_DMR$end, sep = "")
+#Heated_all_DMR$ID <- gsub("__.*__.*:",":",Heated_all_DMR$ID)
+#Control_all_DMR$ID <- paste(Control_all_DMR$`#chr`,":",Control_all_DMR$start,"-",Control_all_DMR$end, sep = "")
+#Control_all_DMR$ID <- gsub("__.*__.*:",":",Control_all_DMR$ID)
+all_DMR$ID <- paste(all_DMR$`#chr`,":",all_DMR$start,"-",all_DMR$end, sep = "")
+all_DMR$ID <- gsub("__.*__.*:",":",all_DMR$ID)
+```
+
+reformat data for calculating group effect
+```{r}
+#reformat all for t test
+#all_DMR_matrix <- as.matrix(all_DMR[, 7:30])
+#ID <- as.character(all_DMR$ID)
+#row.names(all_DMR_matrix) <- ID
+#all_DMR_matrix <- as.data.frame(t(all_DMR_matrix))
+#row.names(all_DMR_matrix) <- gsub("methylation_level_","", row.names(all_DMR_matrix))
+#all_DMR_matrix$Sample.ID <- row.names(all_DMR_matrix) 
+#all_DMR_final <- merge(all_DMR_matrix, meta_data, by = "Sample.ID")
+#all_DMR_final <- all_DMR_final %>%
+  #mutate(sym = recode(trt1, b = "D", c = "C"),
+         #group = paste(sym, trt2, sep = ""))
+#all_DMR_final <- all_DMR_final[,c(1, 21489:21496, 2:21488)]
+#row.names(all_DMR_final) <- all_DMR_final$Sample.ID
+
+
+#reformat all to long format
+#Csymb_all_DMR_STACKED <- tidyr::gather(Csymb_all_DMR[,7:ncol(Csymb_all_DMR)], "Sample.ID", "perc.meth",1:12)
+#Dsymb_all_DMR_STACKED <- tidyr::gather(Dsymb_all_DMR[,7:ncol(Dsymb_all_DMR)], "Sample.ID", "perc.meth",1:12)
+#Heated_all_DMR_STACKED <- tidyr::gather(Heated_all_DMR[,7:ncol(Heated_all_DMR)], "Sample.ID", "perc.meth",1:12)
+#Control_all_DMR_STACKED <- tidyr::gather(Control_all_DMR[,7:ncol(Control_all_DMR)], "Sample.ID", "perc.meth",1:11)
+all_DMR_STACKED <- tidyr::gather(all_DMR[,7:ncol(all_DMR)], "Sample.ID", "perc.meth",1:24)
+
+#simplify sample ID column
+#Csymb_all_DMR_STACKED$Sample.ID <- gsub("methylation_level_","", Csymb_all_DMR_STACKED$Sample.ID)
+#Dsymb_all_DMR_STACKED$Sample.ID <- gsub("methylation_level_","", Dsymb_all_DMR_STACKED$Sample.ID)
+#Heated_all_DMR_STACKED$Sample.ID <- gsub("methylation_level_","", Heated_all_DMR_STACKED$Sample.ID)
+#Control_all_DMR_STACKED$Sample.ID <- gsub("methylation_level_","", Control_all_DMR_STACKED$Sample.ID)
+all_DMR_STACKED$Sample.ID <- gsub("methylation_level_","", all_DMR_STACKED$Sample.ID)
+
+#merge with meta data
+#Csymb_all_DMR_STACKED <- merge(Csymb_all_DMR_STACKED, meta_data, by = "Sample.ID")
+#Dsymb_all_DMR_STACKED <- merge(Dsymb_all_DMR_STACKED, meta_data, by = "Sample.ID")
+#Heated_all_DMR_STACKED <- merge(Heated_all_DMR_STACKED, meta_data, by = "Sample.ID")
+#Control_all_DMR_STACKED <- merge(Control_all_DMR_STACKED, meta_data, by = "Sample.ID")
+all_DMR_STACKED <- merge(all_DMR_STACKED, meta_data, by = "Sample.ID")
+#create a group variable for the combination of treatments
+all_DMR_STACKED <- all_DMR_STACKED %>%
+  mutate(sym = recode(trt1, b = "D", c = "C"),
+         group = paste(sym, trt2, sep = ""))
+all_DMR_STACKED <- all_DMR_STACKED[-7]
+```
+
+plot % meth dist.
+```{r}
+a <- ggplot(Csymb_all_DMR_STACKED) + 
+  geom_histogram(aes(perc.meth, group = trt2, color = trt2,fill = trt2), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated CpGs") + 
+  ggtitle("Symbiont C") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+c <- ggplot(Dsymb_all_DMR_STACKED) + 
+  geom_histogram(aes(perc.meth, group = trt2, color = trt2,fill = trt2), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated CpGs") + 
+  ggtitle("Symbiont D") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+e <- ggplot(Heated_all_DMR_STACKED) + 
+  geom_histogram(aes(perc.meth, group = trt1, color = trt1,fill = trt1), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated CpGs") + 
+  ggtitle("Heated (all symbionts)") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+g <- ggplot(Heated_all_DMR_STACKED) + 
+  geom_histogram(aes(perc.meth, group = trt1, color = trt1,fill = trt1), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated CpGs") + 
+  ggtitle("Control (all symbionts") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+i <- ggplot(all_DMR_STACKED) + 
+  geom_histogram(aes(perc.meth, group = group, color = group,fill = group), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated CpGs") + 
+  ggtitle("All samples") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+```
+
+arc sin sqrt transform the data
+```{r}
+#arcsin sqrt transformation function
+asinTransform <- function(p) { asin(sqrt(p))}
+#arcsin transform data 
+#Csymb
+#Csymb_all_DMR_STACKED_asin <- Csymb_all_DMR_STACKED
+#Csymb_all_DMR_STACKED_asin$perc.meth <- asinTransform(Csymb_all_DMR_STACKED$perc.meth)
+#Dsymb
+#Dsymb_all_DMR_STACKED_asin <- Dsymb_all_DMR_STACKED
+#Dsymb_all_DMR_STACKED_asin$perc.meth <- asinTransform(Dsymb_all_DMR_STACKED_asin$perc.meth)
+#Control (allsymb)
+#Control_all_DMR_STACKED_asin <- Control_all_DMR_STACKED
+#Control_all_DMR_STACKED_asin$perc.meth <- asinTransform(Control_all_DMR_STACKED_asin$perc.meth)
+#Heated (allsymb)
+#Heated_all_DMR_STACKED_asin <- Heated_all_DMR_STACKED
+#Heated_all_DMR_STACKED_asin$perc.meth <- asinTransform(Heated_all_DMR_STACKED_asin$perc.meth)
+all_DMR_STACKED_asin <- all_DMR_STACKED
+all_DMR_STACKED_asin$perc.meth <- asinTransform(all_DMR_STACKED_asin$perc.meth)
+```
+
+plot transformed dist.
+```{r}
+b <- ggplot(Csymb_all_DMR_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = trt2, color = trt2,fill = trt2), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated CpGs") + 
+  ggtitle("Symbiont C Transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+d <- ggplot(Dsymb_all_DMR_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = trt2, color = trt2,fill = trt2), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated CpGs") + 
+  ggtitle("Symbiont D transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+f <- ggplot(Heated_all_DMR_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = trt1, color = trt1,fill = trt1), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated CpGs") + 
+  ggtitle("Heated (all symbionts) transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+h <- ggplot(Heated_all_DMR_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = trt1, color = trt1,fill = trt1), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated CpGs") + 
+  ggtitle("Control (all symbionts) transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+j <- ggplot(all_DMR_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = group, color = group,fill = group), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated CpGs") + 
+  ggtitle("All samples transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+jpeg("Output/DMR_mCpG_histograms.jpg", width = 6, height = 8, units = "in", res = 300)
+ggarrange(a,b,c,d,e,f,g,h, nrow = 4)
+dev.off()
+
+jpeg("Output/1.2_alignment/DMR_mCpG_All_samples_histograms.jpg", width = 8, height = 4, units = "in", res = 300)
+ggarrange(i, j, nrow = 1)
+dev.off()
+
+```
+
+
+## Run anova on TRANSFORMED data to assess group differences for each DMR
+
+## One-way anova
+**Hypotehsis: there is no effect of treatment (here symb&Temp combined)
+```{r}
+all_DMR_1way_aov <- all_DMR_STACKED_asin %>% group_by(ID) %>%
+do(meth_aov_models = aov(perc.meth~group, data =  . ))
+#summarize ANOVA data
+all_DMR_1way_aov_modelsumm  <- all_DMR_1way_aov %>% ungroup %>% 
+    pull(meth_aov_models) %>% 
+    map_dfr(tidy, .id = 'grp')
+#spread out pvalues
+all_DMR_1way_aov_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_1way_aov_modelsumm, names_from = term, values_from = c("df", "sumsq", "meansq","statistic","p.value"),names_sep = "_" ))
+all_DMR_1way_aov_modelsumm_wide <- cbind(all_DMR_1way_aov[,1], all_DMR_1way_aov_modelsumm_wide[,-c(1)])
+all_DMR_1way_aov_modelsumm_wide[which(all_DMR_1way_aov_modelsumm_wide$p.value_group <= 0.05), 1]
+
+```
+
+## Crossed two-way Anova 
+
+**Hypotehsis: there is no effect of temperature, symb or their interaction**
+```{r}
+all_DMR_2way_aov <- all_DMR_STACKED_asin %>% group_by(ID) %>%
+do(meth_aov_models = aov(perc.meth~sym * trt2, data =  . ))
+
+all_DMR_2way_aov_modelsumm  <- all_DMR_2way_aov %>% ungroup %>% 
+    pull(meth_aov_models) %>% 
+    map_dfr(tidy, .id = 'grp')
+#spread out pvalues
+all_DMR_2way_aov_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_2way_aov_modelsumm, names_from = term, values_from = c("df", "sumsq", "meansq","statistic","p.value"),names_sep = "_" ))
+all_DMR_2way_aov_modelsumm_wide <- cbind(all_DMR_2way_aov[,1], all_DMR_2way_aov_modelsumm_wide[,-c(1)])
+all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym<= 0.05), 1]
+all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_trt2<= 0.05), 1]
+all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym.trt2<= 0.05), 1]
+```
+plot heatmap of Permanova for sym p.val 0.05 sig DMRs
+```{r}
+#create matrix for Cc vs Dc
+aov_0.05_sym_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(aov_0.05_sym_DMR_m) <- all_DMR$ID
+aov_0.05_sym_DMR_m <- aov_0.05_sym_DMR_m[which(rownames(aov_0.05_sym_DMR_m) %in% pull(all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym<= 0.05),],ID)),]
+#create matrix for C vs H
+aov_0.05_trt_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(aov_0.05_trt_DMR_m) <- all_DMR$ID
+aov_0.05_trt_DMR_m <- aov_0.05_trt_DMR_m[which(rownames(aov_0.05_trt_DMR_m) %in% pull(all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_trt2<= 0.05),],ID)),]
+#create matrix for Symb*trt
+aov_0.05_inter_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(aov_0.05_inter_DMR_m) <- all_DMR$ID
+aov_0.05_inter_DMR_m <- aov_0.05_inter_DMR_m[which(rownames(aov_0.05_inter_DMR_m) %in% pull(all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym.trt2<= 0.05),],ID)),]
+
+
+#bind all significant loci
+aov_0.05_all_DMR <- as.data.frame(rbind(aov_0.05_inter_DMR_m, aov_0.05_sym_DMR_m, aov_0.05_trt_DMR_m))
+
+sig_DMR <- as.factor(rownames(aov_0.05_all_DMR))
+
+#remove extra text from column names
+
+colnames(aov_0.05_all_DMR) <- gsub("methylation_level_","",colnames(aov_0.05_all_DMR))
+colnames(aov_0.05_sym_DMR_m) <- gsub("methylation_level_","",colnames(aov_0.05_sym_DMR_m))
+colnames(aov_0.05_trt_DMR_m) <- gsub("methylation_level_","",colnames(aov_0.05_trt_DMR_m))
+colnames(aov_0.05_inter_DMR_m) <- gsub("methylation_level_","",colnames(aov_0.05_inter_DMR_m))
+
+###Visualize group means fo all
+#calculate group means
+MeanCc <- rowMeans(aov_0.05_all_DMR[,grep("CC", colnames(aov_0.05_all_DMR))], na.rm = TRUE)
+MeanCh <- rowMeans(aov_0.05_all_DMR[,grep("CH", colnames(aov_0.05_all_DMR))], na.rm = TRUE)
+MeanDc <- rowMeans(aov_0.05_all_DMR[,grep("BC", colnames(aov_0.05_all_DMR))], na.rm = TRUE)
+MeanDh <- rowMeans(aov_0.05_all_DMR[,grep("BH", colnames(aov_0.05_all_DMR))], na.rm = TRUE)
+
+#bind all group means together
+aov_0.05_all_DMR_mean <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(aov_0.05_all_DMR_mean ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/1.2_alignment/all.aov_0.05_DMR_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(aov_0.05_all_DMR_mean,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = FALSE,sepwidth=c(0.01,0.01),sepcolor="white",colsep=1:ncol(aov_0.05_all_DMR_mean),rowsep=1:nrow(aov_0.05_all_DMR_mean),lmat = rbind(c(0,3),c(2,1),c(4,0)),keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+
+#analyze Cc vs Dc comparison
+
+MeanCc <- rowMeans(aov_0.05_all_DMR[,grep("CC", colnames(aov_0.05_sym_DMR_m))], na.rm = TRUE)
+MeanDc <- rowMeans(aov_0.05_all_DMR[,grep("BC", colnames(aov_0.05_sym_DMR_m))], na.rm = TRUE)
+
+#bind control group means together
+aov_0.05_CcDc_DMR_mean <- as.matrix(data.frame(cbind(MeanCc,MeanDc)))
+#plot for Control groups mean comparison
+
+colnames(aov_0.05_CcDc_DMR_mean) <- c("SymbC_Control", "SymbD_Control")
+
+jpeg("Output/1.2_alignment/all.aov_0.05_CcDc_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(aov_0.05_CcDc_DMR_mean,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = FALSE,sepwidth=c(0.01,0.01),sepcolor="white",colsep=1:ncol(aov_0.05_CcDc_DMR_mean),rowsep=1:nrow(aov_0.05_CcDc_DMR_mean),lmat = rbind(c(0,3),c(2,1),c(4,0)),keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+
+```
+#write out DMR bed file
+
+```{r}
+all_DMR_2way_aov_modelsumm_wide$scaffold <- gsub("\\:.*","", all_DMR_2way_aov_modelsumm_wide$ID)
+all_DMR_2way_aov_modelsumm_wide$start <- gsub(".*\\:","", all_DMR_2way_aov_modelsumm_wide$ID)
+all_DMR_2way_aov_modelsumm_wide$start <- gsub("-.*","", all_DMR_2way_aov_modelsumm_wide$start)
+all_DMR_2way_aov_modelsumm_wide$end <- gsub(".*-","",  all_DMR_2way_aov_modelsumm_wide$ID)
+all_DMR_2way_aov_modelsumm_wide <- all_DMR_2way_aov_modelsumm_wide[,c(1,(ncol(all_DMR_2way_aov_modelsumm_wide)-2):ncol(all_DMR_2way_aov_modelsumm_wide),2:(ncol(all_DMR_2way_aov_modelsumm_wide)-3))]
+#order by pvalue
+all_DMR_2way_aov_modelsumm_wide <- all_DMR_2way_aov_modelsumm_wide[order(all_DMR_2way_aov_modelsumm_wide$p.value_sym),]
+write.csv(all_DMR_2way_aov_modelsumm_wide,"Output/1.2_alignment/aov_all.csv", row.names = FALSE, quote = FALSE)
+```
+
+### Genomic feature analysis
+
+generate bedfiles to be used in bedtools intersect to determine features that overlap with regions
+```{r}
+#subset model data for scaffold start and end positions for DMRs significant at p < 0.05
+symb_DMR_sig.bed <- all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym < 0.05),c("scaffold","start", "end")]
+trt_DMR_sig.bed <- all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_trt2 < 0.05),c("scaffold","start", "end")]
+sym.trt_DMR_sig.bed <- all_DMR_2way_aov_modelsumm_wide[which(all_DMR_2way_aov_modelsumm_wide$p.value_sym.trt2 < 0.05),c("scaffold","start", "end")]
+
+#add column denoting tested effect
+symb_DMR_sig.bed$test <- "sym"
+trt_DMR_sig.bed$test <- "temp"
+sym.trt_DMR_sig.bed$test <- "sym:temp"
+
+#write out data
+write.table(symb_DMR_sig.bed, "Output/1.2_alignment/aov_0.05_sym.bed", sep = "\t",row.names = F, col.names = F, quote = F)
+write.table(trt_DMR_sig.bed, "Output/1.2_alignment/aov_0.05_trt.bed", sep = "\t",row.names = F, col.names = F, quote = F)
+write.table(sym.trt_DMR_sig.bed, "Output/1.2_alignment/aov_0.05_sym.trt.bed", sep = "\t",row.names = F, col.names = F, quote = F)
+
+
+```
+
+read in features for DMRs
+```{r}
+# read in features that DMRs overlap with
+sym_DMR_feat <- fread("features_DMR/aov_0.05_sym_DMR.features.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+trt_DMR_feat <- fread("features_DMR/aov_0.05_trt_DMR.features.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+sym.trt_DMR_feat <- fread("features_DMR/aov_0.05_sym.trt_DMR.features.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+
+# read in features that covered regions (background) overlap with
+symb_feat <- fread("features_DMR/control_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+trt_feat <- fread("features_DMR/symbC_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+sym.trt_feat <- fread("features_DMR/all_features.3CpG.txt", header = FALSE,sep = "\t", stringsAsFactors = FALSE)
+
+```
+
+format data for plotting
+```{r}
+# retain only the comparison, the genome coordinates of the feature, and the feature
+sym_DMR_feat <- sym_DMR_feat[,-c(1:3)]
+trt_DMR_feat <- trt_DMR_feat[,-c(1:3)]
+sym.trt_DMR_feat <- sym.trt_DMR_feat[,-c(1:3)]
+
+DMR_feat <- rbind(sym_DMR_feat,trt_DMR_feat,sym.trt_DMR_feat)
+colnames(DMR_feat) <- c("comparison", "scaffold", "start", "end", "feature")
+
+symb_feat$comparison <- "sym"
+trt_feat$comparison <- "temp"
+sym.trt_feat$comparison <- "sym:temp"
+feat <- rbind(symb_feat,trt_feat, sym.trt_feat)
+colnames(feat) <- c("scaffold", "start", "end", "feature","comparison")
+feat <- feat[,c(5,1:4)]
+  
+DMR_feat$region <- "DMRs"
+feat$region <- "all.regions"
+#combine all features and DMRs
+feat_combined <- rbind(DMR_feat, feat)
+feat_combined$feature <- gsub("promoter", "put.promoter",feat_combined$feature)
+feat_combined$feature <- gsub("similarity", "repeat.region",feat_combined$feature)
+
+#plot
+jpeg("Output/1.2_alignment/all.DMR_genom_feat_stacked_barplot.jpg", width = 6, height = 5, units = "in", res =300)
+ggplot(feat_combined,aes(x = region, y = ..count.., fill = factor(feature), group = feature)) + geom_bar(position = "fill", color = "black") + scale_y_continuous(labels=scales::percent) + ylab("% of total regions") + facet_wrap(~comparison,ncol = 4) + theme_bw() + theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1), axis.title = element_text(size = 12, face = "bold")) + scale_fill_manual("Feature",values = RColorBrewer::brewer.pal(9,"BuGn"))
+dev.off()
+
+```
+# Run Chi square test on feature proportions
+
+Symbiont
+```{r}
+# create table with feature totals for DMRs
+sym_DMR_feat_summary <- data.frame(table(sym_DMR_feat$V8))
+#rename columns
+colnames(sym_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+sym_feat_summary <- data.frame(table(symb_feat$V4))
+#rename columns
+colnames(sym_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+sym_feat_summ <- merge(sym_DMR_feat_summary, sym_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+sym_feat_summ[is.na(sym_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+sym_feat_DMR_total <- sum(sym_feat_summ$numDMR)
+sym_feat_region_total <- sum(sym_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(sym_feat_summ)){ #loop through each feature
+  numBKGDReg <-sym_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- sym_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (sym_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (sym_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(sym_feat_summ$feature[i]),paste0("Not",sym_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(sym_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+sym_chi_table <- chi_table
+sym_chi_table$comparison <- "sym"
+```
+
+temperature
+```{r}
+# create table with feature totals for DMRs
+trt_DMR_feat_summary <- data.frame(table(trt_DMR_feat$V8))
+#rename columns
+colnames(trt_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+trt_feat_summary <- data.frame(table(trt_feat$V4))
+#rename columns
+colnames(trt_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+trt_feat_summ <- merge(trt_DMR_feat_summary, trt_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+trt_feat_summ[is.na(trt_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+trt_feat_DMR_total <- sum(trt_feat_summ$numDMR)
+trt_feat_region_total <- sum(trt_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(trt_feat_summ)){ #loop through each feature
+  numBKGDReg <-trt_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- trt_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (trt_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (trt_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(sym_feat_summ$feature[i]),paste0("Not",trt_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(trt_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+trt_chi_table <- chi_table
+trt_chi_table$comparison <- "temp"
+```
+Symbiont:treatment
+```{r}
+# create table with feature totals for DMRs
+sym.trt_DMR_feat_summary <- data.frame(table(sym.trt_DMR_feat$V8))
+#rename columns
+colnames(sym.trt_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+sym.trt_feat_summary <- data.frame(table(sym.trt_feat$V4))
+#rename columns
+colnames(sym.trt_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+sym.trt_feat_summ <- merge(sym.trt_DMR_feat_summary, sym.trt_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+sym.trt_feat_summ[is.na(sym.trt_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+sym.trt_feat_DMR_total <- sum(sym.trt_feat_summ$numDMR)
+sym.trt_feat_region_total <- sum(sym.trt_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(sym.trt_feat_summ)){ #loop through each feature
+  numBKGDReg <-sym.trt_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- sym.trt_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (sym.trt_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (sym.trt_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(sym.trt_feat_summ$feature[i]),paste0("Not",sym.trt_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(sym.trt_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+sym.trt_chi_table <- chi_table
+sym.trt_chi_table$comparison <- "sym"
+
+
+all_chi <- rbind(sym_chi_table,trt_chi_table,sym.trt_chi_table)
+all_chi$feature <- gsub("promoter", "put.promoter",all_chi$feature)
+all_chi$feature <- gsub("similarity", "repeat.reagion",all_chi$feature)
+write.csv(all_chi,"Output/1.2_alignment/DMR_genom_feat_chi_table.csv", row.names = FALSE, quote = FALSE)
+
+```
+
+
+## PERMANOVA ~sym*trt2colony
+
+**Hypotehsis: there is no effect of temperature, symb or their interaction**
+```{r}
+all_DMR__adonis <- all_DMR_STACKED %>% group_by(ID) %>%
+do(meth_perm_models = adonis(perc.meth~sym * trt2 * colony, data =  ., permutations = 999, na.rm = T))
+
+all_DMR_adonis_modelsumm  <- all_DMR__adonis %>% ungroup %>%
+  pull(meth_perm_models)
+
+#run a loop for filling up a table with adonis results
+seed <- all_DMR_adonis_modelsumm[[1]]
+output <- seed$aov.tab[1:5,1:6]
+
+for (i in 2:985){
+  adonis_model <- all_DMR_adonis_modelsumm[[i]]
+  index_output <- adonis_model$aov.tab[1:5,1:6]
+  output <- rbind(output, index_output)
+}
+
+all_DMR_adonis_modelout <- data.frame(grp, term, output)
+
+#spread out pvalues
+all_DMR_adonis_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_adonis_modelout, names_from = term, values_from = c("Df","SumsOfSqs","MeanSqs","F.Model","R2","Pr..F."),names_sep = "_" ))
+all_DMR_adonis_modelsumm_wide <- cbind(all_DMR__adonis[,1], all_DMR_adonis_modelsumm_wide[,-c(1)])
+```
+
+## PERMANOVA ~sym*trt2+colony (strata)
+
+**Hypotehsis: there is no effect of temperature, symb or their interaction within each genet**
+```{r}
+all_DMR_adonis_strt <- all_DMR_STACKED_asin %>% group_by(ID) %>%
+do(meth_perm_models = adonis(perc.meth~sym * trt2 + colony, data =  ., strata = .$colony, permutations = 999, na.rm = T))
+
+all_DMR_adonis_strt_modelsumm  <- all_DMR_adonis_strt %>% ungroup %>%
+  pull(meth_perm_models)
+
+#run a loop for filling up a table with adonis results
+seed <- all_DMR_adonis_strt_modelsumm[[1]]
+output <- seed$aov.tab[1:5,1:6]
+
+for (i in 2:985){
+  adonis_model <- all_DMR_adonis_strt_modelsumm[[i]]
+  index_output <- adonis_model$aov.tab[1:5,1:6]
+  output <- rbind(output, index_output)
+}
+
+all_DMR_adonis_strt_modelout <- data.frame(grp, term, output)
+
+#spread out pvalues
+all_DMR_adonis_strt_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_adonis_strt_modelout, names_from = term, values_from = c("Df","SumsOfSqs","MeanSqs","F.Model","R2","Pr..F."),names_sep = "_" ))
+all_DMR_adonis_strt_modelsumm_wide <- cbind(all_DMR_adonis_strt[,1], all_DMR_adonis_strt_modelsumm_wide[,-c(1)])
+```
+
+plot heatmap of Permanova for sym p.val 0.05 sig DMRs
+```{r}
+#create matrix for Symb
+adonis_0.05_sym_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(adonis_0.05_sym_DMR_m) <- all_DMR$ID
+adonis_0.05_sym_DMR_m <- adonis_0.05_sym_DMR_m[which(rownames(adonis_0.05_sym_DMR_m) %in% pull(all_DMR_adonis_modelsumm_wide[which(all_DMR_adonis_modelsumm_wide$Pr..F._sym < 0.05),],ID)),]
+#create matrix for trt
+adonis_0.05_trt_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(adonis_0.05_trt_DMR_m) <- all_DMR$ID
+adonis_0.05_trt_DMR_m <- adonis_0.05_trt_DMR_m[which(rownames(adonis_0.05_trt_DMR_m) %in% pull(all_DMR_adonis_modelsumm_wide[which(all_DMR_adonis_modelsumm_wide$Pr..F._trt2 < 0.05),],ID)),]
+#create matrix for colony
+adonis_0.05_genet_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(adonis_0.05_genet_DMR_m) <- all_DMR$ID
+adonis_0.05_genet_DMR_m <- adonis_0.05_genet_DMR_m[which(rownames(adonis_0.05_genet_DMR_m) %in% pull(all_DMR_adonis_modelsumm_wide[which(all_DMR_adonis_modelsumm_wide$Pr..F._colony < 0.05),],ID)),]
+#create matrix for Symb*trt
+adonis_0.05_inter_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(adonis_0.05_inter_DMR_m) <- all_DMR$ID
+adonis_0.05_inter_DMR_m <- adonis_0.05_inter_DMR_m[which(rownames(adonis_0.05_inter_DMR_m) %in% pull(all_DMR_adonis_modelsumm_wide[which(all_DMR_adonis_modelsumm_wide$Pr..F._sym.trt2 < 0.05),],ID)),]
+#create matrix for Symb*trt
+adonis_0.05_res_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(adonis_0.05_res_DMR_m) <- all_DMR$ID
+adonis_0.05_res_DMR_m <- adonis_0.05_res_DMR_m[which(rownames(adonis_0.05_res_DMR_m) %in% pull(all_DMR_adonis_modelsumm_wide[which(all_DMR_adonis_modelsumm_wide$Pr..F._Residuals< 0.05),],ID)),]
+
+#bind all significant loci
+adonis_0.05_all_DMR <- as.data.frame(rbind(adonis_0.05_inter_DMR_m, adonis_0.05_sym_DMR_m, adonis_0.05_trt_DMR_m))
+
+#remove extra text from column names
+
+colnames(adonis_0.05_all_DMR) <- gsub("methylation_level_","",colnames(adonis_0.05_all_DMR))
+###Visualize group means
+#calculate group means
+MeanCc <- rowMeans(adonis_0.05_all_DMR[,grep("CC", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanCh <- rowMeans(adonis_0.05_all_DMR[,grep("CH", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanDc <- rowMeans(adonis_0.05_all_DMR[,grep("BC", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanDh <- rowMeans(adonis_0.05_all_DMR[,grep("BH", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+
+#bind all group means together
+adonis_0.05_all_DMR_mean <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(adonis_0.05_all_DMR_mean ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/all.adonis_0.05_DMR_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(adonis_0.05_all_DMR_mean,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = FALSE,sepwidth=c(0.01,0.01),sepcolor="white",colsep=1:ncol(adonis_0.05_all_DMR_mean),rowsep=1:nrow(adonis_0.05_all_DMR_mean),lmat = rbind(c(0,3),c(2,1),c(4,0)),keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+```
+
+T test_loci
+```{r}
+
+
+```
+
+
+**Hypotehsis: there is no effect symbiont shuffling**
+```{r}
+Control_DMR_1way_aov_pH <- Control_all_DMR_STACKED_asin %>% group_by(ID) %>%
+do(meth_aov_models = aov(perc.meth~trt1, data =  . ))
+#summarize ANOVA data
+#d10DMR_1way_aov_pH_modelsumm <- data.frame(glance(d10DMR_1way_aov_pH, meth_aov_models))
+#summarize ANOVA data
+#DMR_2way_aov_modelsumm <- glance(DMR_2way_aov, meth_aov_models)
+Control_DMR_1way_aov_pH_modelsumm  <- Control_DMR_1way_aov_pH %>% ungroup %>% 
+    pull(meth_aov_models) %>% 
+    map_dfr(tidy, .id = 'grp')
+#spread out pvalues
+Control_DMR_1way_aov_pH_modelsumm_wide <- data.frame(tidyr::pivot_wider(Control_DMR_1way_aov_pH_modelsumm, names_from = term, values_from = c("df", "sumsq", "meansq","statistic","p.value"),names_sep = "_" ))
+Control_DMR_1way_aov_pH_modelsumm_wide <- cbind(Control_DMR_1way_aov_pH[,1], Control_DMR_1way_aov_pH_modelsumm_wide[,-c(1)])
+```
+
+plot heatmap of 1way aov for all treat p.val 0.05 sig DMRs
+```{r}
+#create matrix for Csymb samples
+aov_0.05_all_DMR_m <- as.matrix(all_DMR[,7:30])
+rownames(aov_0.05_all_DMR_m) <- all_DMR$ID
+aov_0.05_all_DMR_m <- aov_0.05_all_DMR_m[which(rownames(aov_0.05_all_DMR_m) %in% pull(all_DMR_1way_aov_modelsumm_wide[which(all_DMR_1way_aov_modelsumm_wide$p.value_group < 0.05),],ID)),]
+#remove extra text from column names
+colnames(aov_0.05_all_DMR_m) <- gsub("methylation_level_","",colnames(aov_0.05_all_DMR_m))
+###Visualize group means
+#calculate group means
+MeanCc <- rowMeans(aov_0.05_all_DMR_m[,grep("CC", colnames(aov_0.05_all_DMR_m))], na.rm = TRUE)
+MeanCh <- rowMeans(aov_0.05_all_DMR_m[,grep("CH", colnames(aov_0.05_all_DMR_m))], na.rm = TRUE)
+MeanDc <- rowMeans(aov_0.05_all_DMR_m[,grep("BC", colnames(aov_0.05_all_DMR_m))], na.rm = TRUE)
+MeanDh <- rowMeans(aov_0.05_all_DMR_m[,grep("BH", colnames(aov_0.05_all_DMR_m))], na.rm = TRUE)
+
+#bind all group means together
+aov_0.05_all_DMR_mean_m <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(aov_0.05_all_DMR_mean_m ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/all.DMR_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(aov_0.05_all_DMR_mean_m,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = FALSE,sepwidth=c(0.01,0.01),sepcolor="white",colsep=1:ncol(aov_0.05_all_DMR_mean_m),rowsep=1:nrow(aov_0.05Csymb_DMR_mean_m),lmat = rbind(c(0,3),c(2,1),c(4,0)),keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+```
+
+#write out DMR bed file
+
+```{r}
+all_DMR_adonis_strt_modelsumm_wide$scaffold <- gsub("\\:.*","", all_DMR_adonis_strt_modelsumm_wide$ID)
+all_DMR_adonis_strt_modelsumm_wide$start <- gsub(".*\\:","", all_DMR_adonis_strt_modelsumm_wide$ID)
+all_DMR_adonis_strt_modelsumm_wide$start <- gsub("-.*","", all_DMR_adonis_strt_modelsumm_wide$start)
+all_DMR_adonis_strt_modelsumm_wide$end <- gsub(".*-","",  all_DMR_adonis_strt_modelsumm_wide$ID)
+all_DMR_adonis_strt_modelsumm_wide <- all_DMR_adonis_strt_modelsumm_wide[,c(1,(ncol(all_DMR_adonis_strt_modelsumm_wide)-2):ncol(all_DMR_adonis_strt_modelsumm_wide),2:(ncol(all_DMR_adonis_strt_modelsumm_wide)-3))]
+#order by pvalue
+all_DMR_adonis_strt_modelsumm_wide <- all_DMR_adonis_strt_modelsumm_wide[order(all_DMR_adonis_strt_modelsumm_wide$Pr..F._sym),]
+write.csv(all_DMR_adonis_strt_modelsumm_wide,"Output/adonis_strt_all.csv", row.names = FALSE, quote = FALSE)
+```
+

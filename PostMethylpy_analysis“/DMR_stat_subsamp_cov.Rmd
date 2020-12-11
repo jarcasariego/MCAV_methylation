@@ -1,0 +1,303 @@
+---
+title: "DMR_stat_subsamp_covs"
+author: "Javier Rodriguez Casariego"
+date: "10/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load libraries
+```{r}
+library(data.table)
+library(gplots)
+library(ggplot2) #install.packages('ggplot2')
+library(dplyr)
+library(broom)
+library(RColorBrewer)
+library(egg) #install.packages('egg')
+library(purrr)
+library(nlme)
+library(vegan)
+```
+
+read in data
+```{r}
+
+allsamples_DMR_subsamp <- fread('DMR_files/subsampled_covs/alltreat_DMR250bp_cov5x_rms_results_collapsed.tsv', sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+meta_data <- read.csv("Treatment_metadata.csv", stringsAsFactors = FALSE)
+colnames(meta_data)[1] <- "Sample.ID"
+
+
+```
+
+loop through table and keep only lines where up to one sample contains NA for % methylation
+```{r}
+## For all samples DMR table 
+df <- data.frame() #create empty data frame to bind filtered rows into
+for(i in (1:nrow(allsamples_DMR_subsamp))){
+  Cc <- allsamples_DMR_subsamp[i,7:11] #define columns from the category CC
+  Ch <- allsamples_DMR_subsamp[i,12:18] #define columns from the category CH
+  Dc <- allsamples_DMR_subsamp[i,19:24] #define columns from the category BC
+  Dh <- allsamples_DMR_subsamp[i,25:30] #define columns from the category BH
+    if(length(which(is.na(Cc))) < 1 & length(which(is.na(Ch))) < 1 & length(which(is.na(Dc))) < 1 & length(which(is.na(Dh))) < 1){
+  df <- rbind(df,allsamples_DMR_subsamp[i,]) #conditional statement: if less than 2 sameples/category have NA for % methylation bind the whole row to the new dataframe
+  }
+}
+#save df as a specific variable
+all_DMR_sub <- df
+```
+
+# Part 2: Run group statistics on regions to find regions that are significantly different among groups
+
+Make a unique ID column 
+```{r}
+#for all sample comparison
+
+all_DMR_sub$ID <- paste(all_DMR_sub$`#chr`,":",all_DMR_sub$start,"-",all_DMR_sub$end, sep = "")
+all_DMR_sub$ID <- gsub("__.*__.*:",":",all_DMR_sub$ID)
+```
+
+reformat data for calculating group effect
+```{r}
+#reformat to long format
+all_DMR_sub_STACKED <- tidyr::gather(all_DMR_sub[,7:ncol(all_DMR_sub)], "Sample.ID", "perc.meth",1:24)
+
+#simplify sample ID column
+all_DMR_sub_STACKED$Sample.ID <- gsub("methylation_level_","", all_DMR_sub_STACKED$Sample.ID)
+
+#merge with meta data
+all_DMR_sub_STACKED <- merge(all_DMR_sub_STACKED, meta_data, by = "Sample.ID")
+
+#create a group variable for the combination of treatments
+all_DMR_sub_STACKED <- all_DMR_sub_STACKED %>%
+  mutate(sym = recode(trt1, b = "D", c = "C"),
+         group = paste(sym, trt2, sep = ""))
+all_DMR_sub_STACKED <- all_DMR_sub_STACKED[-7]
+```
+
+plot % meth dist.
+```{r}
+a <- ggplot(all_DMR_sub_STACKED) + 
+  geom_histogram(aes(perc.meth, group = group, color = group,fill = group), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("fraction methylated loci") + 
+  ggtitle("All samples") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+```
+
+arc sin sqrt transform the data
+```{r}
+#arcsin sqrt transformation function
+asinTransform <- function(p) { asin(sqrt(p))}
+#arcsin transform data 
+all_DMR_sub_STACKED_asin <- all_DMR_sub_STACKED
+all_DMR_sub_STACKED_asin$perc.meth <- asinTransform(all_DMR_sub_STACKED_asin$perc.meth)
+```
+
+plot transformed dist.
+```{r}
+b <- ggplot(all_DMR_sub_STACKED_asin) + 
+  geom_histogram(aes(perc.meth, group = group, color = group,fill = group), bins = 10, position = "identity", alpha = 0.5) + 
+  theme_bw() + 
+  xlab("transformed fraction methylated loci") + 
+  ggtitle("All samples transformed") + 
+  theme(text = element_text(size=8),plot.title = element_text(size = 8,face = "bold"),legend.title = element_text(size = 4),legend.text = element_text(size = 4))
+
+
+jpeg("Output/DMR_subsampled_All_samples_histograms_na.rm.jpg", width = 8, height = 4, units = "in", res = 300)
+ggarrange(a, b, nrow = 1)
+dev.off()
+
+```
+plot heatmap of all DMR (no stats)
+```{r}
+#create matrix for Csymb samples
+all_DMR_m <- as.matrix(all_DMR_sub[,7:30])
+rownames(all_DMR_m) <- all_DMR_sub$ID
+#remove extra text from column names
+colnames(all_DMR_m) <- gsub("methylation_level_","",colnames(all_DMR_m))
+###Visualize group means
+#calculate group means
+MeanCc <- rowMeans(all_DMR_m[,grep("CC", colnames(all_DMR_m))], na.rm = TRUE)
+MeanCh <- rowMeans(all_DMR_m[,grep("CH", colnames(all_DMR_m))], na.rm = TRUE)
+MeanDc <- rowMeans(all_DMR_m[,grep("BC", colnames(all_DMR_m))], na.rm = TRUE)
+MeanDh <- rowMeans(all_DMR_m[,grep("BH", colnames(all_DMR_m))], na.rm = TRUE)
+
+#bind all group means together
+all_DMR_mean_m <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(all_DMR_mean_m ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/all_subsamp.DMR_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(all_DMR_mean_m,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = FALSE, sepwidth=c(0,0), sepcolor="white",colsep=1:ncol(all_DMR_mean_m),lmat = rbind(c(0,3),c(2,1),c(4,0)),keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+```
+## PERMANOVA ~sym*trt2colony
+
+**Hypothesis: there is no effect of temperature, symb or their interaction**
+```{r}
+all_DMR_sub_adonis <- all_DMR_sub_STACKED %>% group_by(ID) %>%
+do(meth_perm_models = adonis(perc.meth ~ sym*trt2*colony, data =  ., permutations = 999, na.rm = T))
+
+all_DMR_adonis_modelsumm  <- all_DMR_sub_adonis %>% ungroup %>%
+  pull(meth_perm_models)
+
+#run a loop for filling up a table with adonis results
+grp <- rep(1:2112, each = 8)
+seed <- all_DMR_adonis_modelsumm[[1]]
+output <- seed$aov.tab[1:8,1:6]
+term <- rep(rownames(output), 2112)
+
+for (i in 2:2112){
+  adonis_model <- all_DMR_adonis_modelsumm[[i]]
+  index_output <- adonis_model$aov.tab[1:8,1:6]
+  output <- rbind(output, index_output)
+}
+
+all_DMR_adonis_modelout <- data.frame(grp, term, output)
+
+#spread out pvalues
+all_DMR_sub_adonis_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_adonis_modelout, names_from = term, values_from = c("Df","SumsOfSqs","MeanSqs","F.Model","R2","Pr..F."),names_sep = "_" ))
+all_DMR_adonis_sub_modelsumm_wide <- cbind(all_DMR_sub_adonis[,1], all_DMR_sub_adonis_modelsumm_wide[,-c(1)])
+```
+
+plot heatmap of Permanova for p.val 0.05 sig DMRs
+```{r}
+
+#create matrix for Symb
+adonis_0.05_sym_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_sym_DMR) <- all_DMR_sub$ID
+adonis_0.05_sym_DMR<- adonis_0.05_sym_DMR[which(rownames(adonis_0.05_sym_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._sym < 0.05),],ID)),]
+#create matrix for trt
+adonis_0.05_trt_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_trt_DMR) <- all_DMR_sub$ID
+adonis_0.05_trt_DMR <- adonis_0.05_trt_DMR[which(rownames(adonis_0.05_trt_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._trt2 < 0.05),],ID)),]
+#create matrix for colony
+adonis_0.05_genet_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_genet_DMR) <- all_DMR_sub$ID
+adonis_0.05_genet_DMR <- adonis_0.05_genet_DMR[which(rownames(adonis_0.05_genet_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._colony < 0.05),],ID)),]
+#create matrix for Symb*trt
+adonis_0.05_sym.trt_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_sym.trt_DMR) <- all_DMR_sub$ID
+adonis_0.05_sym.trt_DMR <- adonis_0.05_sym.trt_DMR[which(rownames(adonis_0.05_sym.trt_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._sym.trt2 < 0.05),],ID)),]
+#create matrix for Symb*colony
+adonis_0.05_symb.col_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_symb.col_DMR) <- all_DMR_sub$ID
+adonis_0.05_symb.col_DMR <- adonis_0.05_symb.col_DMR[which(rownames(adonis_0.05_symb.col_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._sym.colony< 0.05),],ID)),]
+#create matrix for trt*colony
+adonis_0.05_trt.col_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_trt.col_DMR) <- all_DMR_sub$ID
+adonis_0.05_trt.col_DMR <- adonis_0.05_trt.col_DMR[which(rownames(adonis_0.05_trt.col_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._trt2.colony< 0.05),],ID)),]
+#create matrix for sym*trt*colony
+adonis_0.05_inter_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_inter_DMR) <- all_DMR_sub$ID
+adonis_0.05_inter_DMR <- adonis_0.05_inter_DMR[which(rownames(adonis_0.05_inter_DMR) %in% pull(all_DMR_adonis_sub_modelsumm_wide[which(all_DMR_sub_adonis_modelsumm_wide$Pr..F._sym.trt2.colony < 0.05),],ID)),]
+
+#bind all significant loci
+adonis_0.05_all_DMR <- as.data.frame(rbind(adonis_0.05_sym_DMR, adonis_0.05_trt_DMR, adonis_0.05_sym.trt_DMR))
+
+#remove extra text from column names
+
+colnames(adonis_0.05_all_DMR) <- gsub("methylation_level_","",colnames(adonis_0.05_all_DMR))
+###Visualize group means
+#calculate group means
+MeanCc <- rowMeans(adonis_0.05_all_DMR[,grep("CC", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanCh <- rowMeans(adonis_0.05_all_DMR[,grep("CH", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanDc <- rowMeans(adonis_0.05_all_DMR[,grep("BC", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+MeanDh <- rowMeans(adonis_0.05_all_DMR[,grep("BH", colnames(adonis_0.05_all_DMR))], na.rm = TRUE)
+
+#bind all group means together
+adonis_0.05_all_DMR_mean <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(adonis_0.05_all_DMR_mean ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/all.subsamp_adonis_0.05_DMR_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(adonis_0.05_all_DMR_mean,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = T, sepwidth=c(0.01,0.01), sepcolor="white", colsep=1:ncol(adonis_0.05_all_DMR_mean), rowsep=1:nrow(adonis_0.05_all_DMR_mean), lmat = rbind(c(0,3),c(2,1),c(4,0)), keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+```
+
+## PERMANOVA ~sym*trt2colony
+
+**Hypothesis: there is no effect of group, within colony**
+```{r}
+all_DMR_sub_adonis_m2 <- all_DMR_sub_STACKED %>% group_by(ID) %>%
+do(meth_perm_models = adonis(perc.meth ~ group*colony, data =  ., strata = .$colony, permutations = 999, na.rm = T))
+
+all_DMR_adonis_m2_modelsumm  <- all_DMR_sub_adonis_m2 %>% ungroup %>%
+  pull(meth_perm_models)
+
+#run a loop for filling up a table with adonis results
+grp <- rep(1:2112, each = 4)
+seed <- all_DMR_adonis_m2_modelsumm[[1]]
+output <- seed$aov.tab[1:4,1:6]
+term <- rep(rownames(output), 2112)
+
+for (i in 2:2112){
+  adonis_model <- all_DMR_adonis_m2_modelsumm[[i]]
+  index_output <- adonis_model$aov.tab[1:4,1:6]
+  output <- rbind(output, index_output)
+}
+
+all_DMR_adonis_m2_modelout <- data.frame(grp, term, output)
+
+#spread out pvalues
+all_DMR_sub_adonis_m2_modelsumm_wide <- data.frame(tidyr::pivot_wider(all_DMR_adonis_m2_modelout, names_from = term, values_from = c("Df","SumsOfSqs","MeanSqs","F.Model","R2","Pr..F."),names_sep = "_" ))
+all_DMR_adonis_sub_m2_modelsumm_wide <- cbind(all_DMR_sub_adonis_m2[,1], all_DMR_sub_adonis_m2_modelsumm_wide[,-c(1)])
+
+#create matrix for group
+adonis_0.05_group_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_group_DMR) <- all_DMR_sub$ID
+adonis_0.05_group_DMR<- adonis_0.05_group_DMR[which(rownames(adonis_0.05_group_DMR) %in% pull(all_DMR_adonis_sub_m2_modelsumm_wide[which(all_DMR_sub_adonis_m2_modelsumm_wide$Pr..F._group < 0.05),],ID)),]
+
+```
+
+plot heatmap of Permanova for p.val 0.05 sig DMRs
+```{r}
+
+#create matrix for group
+adonis_0.05_group_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_group_DMR) <- all_DMR_sub$ID
+adonis_0.05_group_DMR<- adonis_0.05_group_DMR[which(rownames(adonis_0.05_group_DMR) %in% pull(all_DMR_adonis_sub_m2_modelsumm_wide[which(all_DMR_sub_adonis_m2_modelsumm_wide$Pr..F._group < 0.05),],ID)),]
+
+#create matrix for colony
+adonis_0.05_genet_m2_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_genet_m2_DMR) <- all_DMR_sub$ID
+adonis_0.05_genet_m2_DMR <- adonis_0.05_genet_m2_DMR[which(rownames(adonis_0.05_genet_m2_DMR) %in% pull(all_DMR_adonis_sub_m2_modelsumm_wide[which(all_DMR_sub_adonis_m2_modelsumm_wide$Pr..F._colony < 0.05),],ID)),]
+
+#create matrix for group*colony
+adonis_0.05_inter_m2_DMR <- as.matrix(all_DMR_sub[,7:30])
+rownames(adonis_0.05_inter_m2_DMR) <- all_DMR_sub$ID
+adonis_0.05_inter_m2_DMR <- adonis_0.05_inter_m2_DMR[which(rownames(adonis_0.05_inter_m2_DMR) %in% pull(all_DMR_adonis_sub_m2_modelsumm_wide[which(all_DMR_sub_adonis_m2_modelsumm_wide$Pr..F._group.colony < 0.05),],ID)),]
+
+#bind all significant loci
+adonis_0.05_all_DMR_m2 <- as.data.frame(rbind(adonis_0.05_group_DMR))
+
+#remove extra text from column names
+
+colnames(adonis_0.05_all_DMR_m2) <- gsub("methylation_level_","",colnames(adonis_0.05_all_DMR_m2))
+###Visualize group means
+#calculate group means
+MeanCc <- rowMeans(adonis_0.05_all_DMR_m2[,grep("CC", colnames(adonis_0.05_all_DMR_m2))], na.rm = TRUE)
+MeanCh <- rowMeans(adonis_0.05_all_DMR_m2[,grep("CH", colnames(adonis_0.05_all_DMR_m2))], na.rm = TRUE)
+MeanDc <- rowMeans(adonis_0.05_all_DMR_m2[,grep("BC", colnames(adonis_0.05_all_DMR_m2))], na.rm = TRUE)
+MeanDh <- rowMeans(adonis_0.05_all_DMR_m2[,grep("BH", colnames(adonis_0.05_all_DMR_m2))], na.rm = TRUE)
+
+#bind all group means together
+adonis_0.05_all_DMR_m2_mean <- as.matrix(data.frame(cbind(MeanCc,MeanCh,MeanDc,MeanDh)))
+#plot for C symb group mean comparison
+colnames(adonis_0.05_all_DMR_m2_mean ) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("Output/all.subsamp_adonis_0.05_DMR_m2_group_heatmap.jpg", width = 600, height = 1000)
+heatmap.2(adonis_0.05_all_DMR_m2_mean,margins = c(10,20), cexCol = 2, distfun = function(x) as.dist(1 - cor(t(x), use = "pa")), hclustfun = function(x) hclust(x,method = 'average'),key.xtickfun = function() {
+  breaks = pretty(parent.frame()$breaks)
+  #breaks = breaks[c(1,length(breaks))]
+  list(at = parent.frame()$scale01(breaks),labels = breaks)},Colv=NA, col= rev(colorRampPalette(brewer.pal(10, "RdYlBu"))(256)), density.info = "none", trace = "none", scale = "row", labRow = T, sepwidth=c(0.01,0.01), sepcolor="white", colsep=1:ncol(adonis_0.05_all_DMR_m2_mean), rowsep=1:nrow(adonis_0.05_all_DMR_mean), lmat = rbind(c(0,3),c(2,1),c(4,0)), keysize=0.5, key.par = list(cex=1),lhei=c(1.5,4,1), lwid = c(1.5,4))
+dev.off()
+```
