@@ -1,0 +1,172 @@
+#!/bin/bash
+
+#creating tab files from Cytosummaries
+
+for f in *merged_CpG_evidence.cov
+do
+  STEM=$(basename "${f}" .CpG_report.merged_CpG_evidence.cov)
+  cat "${f}" | awk -F $'\t' 'BEGIN {OFS = FS} {if ($5+$6 >= 5) {print $1, $2, $3, $4, $5, $6}}' \
+  > "${STEM}"_5x.tab
+done
+
+#########################################
+## convert 5x.tab files to allc format ##
+#########################################
+
+## 1. Scaffold
+## 2. Position (subtract 1 from the end position to get same position as allc and cov files)
+## 3. strand
+## 4. context
+## 5. number mC
+## 6. total C (numer of mC ($5) + numer of unmC ($6))
+
+
+for f in *_5x.tab
+do
+awk -F"\t" '{print $1"\t"$3-1"\t""+""\t""CGA""\t"$5"\t"$5+$6"\t"1}' ${f} \
+> $(basename ${f} _5x.tab)_5xmerg_allc.tsv
+done
+
+## Run methypy
+source activate methylpy
+
+###########################################
+####### run DMRfind for all samples #######
+###########################################
+
+methylpy DMRfind \
+--allc-files \
+CC-20-1_5xmerg_allc.tsv \
+CC-22-1_5xmerg_allc.tsv \
+CC-22-2_5xmerg_allc.tsv \
+CC-26-1_5xmerg_allc.tsv \
+CC-26-2_5xmerg_allc.tsv \
+CH-20-1_5xmerg_allc.tsv \
+CH-20-2_5xmerg_allc.tsv \
+CH-20-3_5xmerg_allc.tsv \
+CH-22-1_5xmerg_allc.tsv \
+CH-22-2_5xmerg_allc.tsv \
+CH-26-1_5xmerg_allc.tsv \
+CH-26-2_5xmerg_allc.tsv \
+BC-20-1_5xmerg_allc.tsv \
+BC-20-2_5xmerg_allc.tsv \
+BC-22-1_5xmerg_allc.tsv \
+BC-22-2_5xmerg_allc.tsv \
+BC-26-1_5xmerg_allc.tsv \
+BC-26-2_5xmerg_allc.tsv \
+BH-20-1_5xmerg_allc.tsv \
+BH-20-2_5xmerg_allc.tsv \
+BH-22-1_5xmerg_allc.tsv \
+BH-22-2_5xmerg_allc.tsv \
+BH-26-1_5xmerg_allc.tsv \
+BH-26-2_5xmerg_allc.tsv \
+--samples CC-20-1 CC-22-1 CC-22-2 CC-26-1 CC-26-2 CH-20-1 CH-20-2 CH-20-3 CH-22-1 CH-22-2 CH-26-1 CH-26-2 \
+BC-20-1 BC-20-2 BC-22-1 BC-22-2 BC-26-1 BC-26-2 BH-20-1 BH-20-2 BH-22-1 BH-22-2 BH-26-1 BH-26-2 \
+--mc-type "CGN" \
+--num-procs 8 \
+--output-prefix alltreat_DMR250bp_cov5x \
+--dmr-max-dist 250 \
+--min-num-dms 3 
+
+###########################################
+#### run DMRfind for CC vs CH comparison ##
+###########################################
+
+methylpy DMRfind \
+--allc-files \
+CC-20-1_5xmerg_allc.tsv \
+CC-22-1_5xmerg_allc.tsv \
+CC-22-2_5xmerg_allc.tsv \
+CC-26-1_5xmerg_allc.tsv \
+CC-26-2_5xmerg_allc.tsv \
+CH-20-1_5xmerg_allc.tsv \
+CH-20-2_5xmerg_allc.tsv \
+CH-20-3_5xmerg_allc.tsv \
+CH-22-1_5xmerg_allc.tsv \
+CH-22-2_5xmerg_allc.tsv \
+CH-26-1_5xmerg_allc.tsv \
+CH-26-2_5xmerg_allc.tsv \
+
+--samples CC-20-1 CC-22-1 CC-22-2 CC-26-1 CC-26-2 CH-20-1 CH-20-2 CH-20-3 CH-22-1 CH-22-2 CH-26-1 CH-26-2 \
+--mc-type "CGN" \
+--num-procs 8 \
+--output-prefix Csymb_alltreat_DMR250bp_cov5x \
+--dmr-max-dist 250 \
+--min-num-dms 3 
+
+#########################################
+## Run DMRfind for BC vs BH comparison ##
+#########################################
+
+methylpy DMRfind \
+--allc-files \
+BC-20-1_5xmerg_allc.tsv \
+BC-20-2_5xmerg_allc.tsv \
+BC-22-1_5xmerg_allc.tsv \
+BC-22-2_5xmerg_allc.tsv \
+BC-26-1_5xmerg_allc.tsv \
+BC-26-2_5xmerg_allc.tsv \
+BH-20-1_5xmerg_allc.tsv \
+BH-20-2_5xmerg_allc.tsv \
+BH-22-1_5xmerg_allc.tsv \
+BH-22-2_5xmerg_allc.tsv \
+BH-26-1_5xmerg_allc.tsv \
+BH-26-2_5xmerg_allc.tsv \
+--samples BC-20-1 BC-20-2 BC-22-1 BC-22-2 BC-26-1 BC-26-2 BH-20-1 BH-20-2 BH-22-1 BH-22-2 BH-26-1 BH-26-2 \
+--mc-type "CGN" \
+--num-procs 8 \
+--output-prefix Dsymb_alltreat_DMR250bp_cov5x \
+--dmr-max-dist 250 \
+--min-num-dms 3 
+
+#########################################
+### Run DMRfind for CC vs BC samples ####
+#########################################
+
+methylpy DMRfind \
+--allc-files \
+CC-20-1_5xmerg_allc.tsv \
+CC-22-1_5xmerg_allc.tsv \
+CC-22-2_5xmerg_allc.tsv \
+CC-26-1_5xmerg_allc.tsv \
+CC-26-2_5xmerg_allc.tsv \
+BC-20-1_5xmerg_allc.tsv \
+BC-20-2_5xmerg_allc.tsv \
+BC-22-1_5xmerg_allc.tsv \
+BC-22-2_5xmerg_allc.tsv \
+BC-26-1_5xmerg_allc.tsv \
+BC-26-2_5xmerg_allc.tsv \
+--samples CC-20-1 CC-22-1 CC-22-2 CC-26-1 CC-26-2 BC-20-1 BC-20-2 BC-22-1 BC-22-2 BC-26-1 BC-26-2 \
+--mc-type "CGN" \
+--num-procs 8 \
+--output-prefix Control_SymbComp_DMR250bp_cov5x \
+--dmr-max-dist 250 \
+--min-num-dms 3 
+
+###################################
+# Run DMRfind for CH vs BH samples#
+###################################
+
+methylpy DMRfind \
+--allc-files \
+CH-20-1_5xmerg_allc.tsv \
+CH-20-2_5xmerg_allc.tsv \
+CH-20-3_5xmerg_allc.tsv \
+CH-22-1_5xmerg_allc.tsv \
+CH-22-2_5xmerg_allc.tsv \
+CH-26-1_5xmerg_allc.tsv \
+CH-26-2_5xmerg_allc.tsv \
+BH-20-1_5xmerg_allc.tsv \
+BH-20-2_5xmerg_allc.tsv \
+BH-22-1_5xmerg_allc.tsv \
+BH-22-2_5xmerg_allc.tsv \
+BH-26-1_5xmerg_allc.tsv \
+BH-26-2_5xmerg_allc.tsv \
+--samples CH-20-1 CH-20-2 CH-20-3 CH-22-1 CH-22-2 CH-26-1 CH-26-2 BH-20-1 BH-20-2 BH-22-1 BH-22-2 BH-26-1 BH-26-2 \
+--mc-type "CGN" \
+--num-procs 8 \
+--output-prefix Heated_Symb_DMR250bp_cov5x \
+--dmr-max-dist 250 \
+--min-num-dms 3 
+
+conda deactivate

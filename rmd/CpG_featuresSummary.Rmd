@@ -1,0 +1,72 @@
+---
+title: "CpGAmongFeaturesSummary"
+author: "Javier Rodriguez Casariego"
+date: "1/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#### Data ####
+## path
+inputDir <- "../analyses/Genomic_features/20210119_FeatureCpGDist"
+outputDir <- "../analyses/Genomic_features/"
+
+## Specific Feature coverage
+setwd(inputDir)
+# All cytosines in the genome
+all_exon <- read.delim("20210119_CpG_all_Exon.txt",sep="\t",header = FALSE)
+all_intron <- read.delim("20210119_CpG_all_Intron.txt",sep="\t",header = FALSE)
+all_gene <- read.delim("20210119_CpG_all_gene.txt",sep="\t",header = FALSE)
+all_intergenic <- read.delim("20210119_CpG_all_Intergenic.txt",sep="\t",header = FALSE)
+all_repeat <- read.delim("20210119_CpG_all_repeatL.txt",sep="\t",header = FALSE)
+# All cytosines with 5x coverage
+cov5_exon <- read.delim("20210119_CpG_cov5_Exon.txt",sep="\t",header = FALSE)
+cov5_intron <- read.delim("20210119_CpG_cov5_Intron.txt",sep="\t",header = FALSE)
+cov5_gene <- read.delim("20210119_CpG_cov5_gene.txt",sep="\t",header = FALSE)
+cov5_intergenic <- read.delim("20210119_CpG_cov5_Intergenic.txt",sep="\t",header = FALSE)
+cov5_repeat <- read.delim("20210119_CpG_cov5_repeatL.txt",sep="\t",header = FALSE)
+
+```
+
+```{r}
+#### CpG By Feature Summary #####
+featureSum <- list()
+# All
+featureSum$allCG <-c(length(unique(paste0(all_exon$V4,all_exon$V5,all_exon$V6))),
+                     #length(unique(paste0(all_gene$V4,all_gene$V5,all_gene$V6))),
+                     length(unique(paste0(all_intron$V4,all_intron$V2,all_intron$V6))),
+                     length(unique(paste0(all_intergenic$V4,all_intergenic$V5,all_intergenic$V6))),
+                     length(unique(paste0(all_repeat$V4,all_repeat$V2,all_repeat$V6))))
+# 5x coverage
+featureSum$CG5 <-c(length(unique(paste0(cov5_exon$V4,cov5_exon$V5,cov5_exon$V6))),
+                   #length(unique(paste0(cov5_gene$V4,cov5_gene$V5,cov5_gene$V6))),
+                   length(unique(paste0(cov5_intron$V4,cov5_intron$V2,cov5_intron$V6))),
+                   length(unique(paste0(cov5_intergenic$V4,cov5_intergenic$V5,cov5_intergenic$V6))),
+                   length(unique(paste0(cov5_repeat$V4,cov5_repeat$V2,cov5_repeat$V6))))
+
+Categories <- c("CpGs_all","CpGs_5x")
+Feature <- c("Exon","Intron","Intergenic","Repeat")
+cat_vec <- NULL
+feat_vec <- NULL
+count_vec <- NULL
+percent_vec <- NULL
+for(i in 1:length(Categories)){
+  for(j in 1:length(Feature)) {
+    cat_vec <- c(cat_vec,Categories[i])
+    feat_vec <- c(feat_vec,Feature[j])
+    count_vec <- c(count_vec,featureSum[[i]][j])
+    percent_vec <- c(percent_vec,round(featureSum[[i]][j]/sum(featureSum[[i]][c(1:4)])*100,digits = 2))
+  }
+}
+sumtable <- data.frame(category=cat_vec,feature=feat_vec,count=count_vec,percent=percent_vec)
+# Save table
+setwd(outputDir)
+write.csv(sumtable,"20210119_AllCpGAmongFeaturesSummaryTable.csv")
+
+```
+
+

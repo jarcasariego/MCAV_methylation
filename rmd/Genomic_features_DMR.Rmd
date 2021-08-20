@@ -1,0 +1,980 @@
+---
+title: "DMR_by_feature"
+author: "Javier Rodriguez Casariego"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load libraries
+```{r}
+library(data.table)
+library(gplots)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+```
+
+read in features for DMRs
+```{r}
+# read in features that DMRs overlap with
+sym_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_sym_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+trt_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_trt_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+sym.trt_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_sym.trt_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+
+Cc_Dc_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_Cc_Dc_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+Cc_Ch_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_Cc_Ch_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+Ch_Dh_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_Ch_Dh_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+Dc_Dh_DMR_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/DMR.bed_files/aov_0.05_Dc_Dh_feature.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+
+# read in features that covered regions (background) overlap with
+symb_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/all.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+trt_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/all.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+sym.trt_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/all.grps_features.3CpG.txt", header = FALSE,sep = "\t", stringsAsFactors = FALSE)
+
+Ctrol_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/control.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+Heated_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/heated.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+SymbC_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/symbC.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+SymbD_feat <- fread("../analyses/DMR_output/DMR_Genomic_feature_analysis/symbD.grps_features.3CpG.txt", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+
+```
+
+format data for plotting
+```{r}
+# retain only the comparison, the genome coordinates of the feature, and the feature
+#Aov 2way
+sym_DMR_feat <- sym_DMR_feat[,-c(1:3)]
+trt_DMR_feat <- trt_DMR_feat[,-c(1:3)]
+sym.trt_DMR_feat <- sym.trt_DMR_feat[,-c(1:3)]
+DMR_feat <- rbind(sym_DMR_feat,trt_DMR_feat,sym.trt_DMR_feat)
+colnames(DMR_feat) <- c("comparison", "scaffold", "start", "end", "feature")
+
+#1x1 comparison
+Cc_Ch_DMR_feat <- Cc_Ch_DMR_feat [,-c(1:3)]
+Cc_Dc_DMR_feat <- Cc_Dc_DMR_feat [,-c(1:3)]
+Ch_Dh_DMR_feat <- Ch_Dh_DMR_feat [,-c(1:3)]
+Dc_Dh_DMR_feat <- Dc_Dh_DMR_feat [,-c(1:3)]
+Comp_DMR_feat <- rbind(Cc_Ch_DMR_feat, Cc_Dc_DMR_feat, Ch_Dh_DMR_feat, Dc_Dh_DMR_feat)
+colnames(Comp_DMR_feat) <- c("comparison", "scaffold", "start", "end", "feature")
+
+symb_feat$comparison <- "sym"
+trt_feat$comparison <- "temp"
+sym.trt_feat$comparison <- "sym:temp"
+Ctrol_feat$comparison <- "Cc.vs.Dc"
+Heated_feat$comparison <- "Ch.vs.Dh"
+SymbC_feat$comparison <- "Cc.vs.Ch"
+SymbD_feat$comparison <- "Dc.vs.Dh"
+  
+feat <- rbind(symb_feat,trt_feat, sym.trt_feat)
+colnames(feat) <- c("scaffold", "start", "end", "feature","comparison")
+feat <- feat[,c(5,1:4)]
+
+Comp_feat <- rbind(Ctrol_feat, Heated_feat, SymbC_feat, SymbD_feat)
+colnames(Comp_feat) <- c("scaffold", "start", "end", "feature","comparison")
+feat <- feat[,c(5,1:4)]
+  
+DMR_feat$region <- "DMRs"
+Comp_DMR_feat$region <- "DMRs"
+feat$region <- "all.regions"
+Comp_feat$region <- "all.regions"
+#combine all features and DMRs
+feat_combined <- rbind(DMR_feat, feat)
+feat_combined$feature <- gsub("similarity", "repeat.region",feat_combined$feature)
+
+Comp_feat_combined <- rbind(Comp_DMR_feat, Comp_feat)
+Comp_feat_combined$feature <- gsub("similarity", "repeat.region",Comp_feat_combined$feature)
+
+#plot
+#jpeg("../output/other/general_comp.DMR_genom_feat_stacked_barplot.jpg", width = 6, height = 5, units = "in", res =300)
+ggplot(feat_combined,aes(x = region, y = ..count.., fill = factor(feature), group = feature)) + geom_bar(position = "fill", color = "black") + scale_y_continuous(labels=scales::percent) + ylab("% of total regions") + facet_wrap(~comparison,ncol = 4) + theme_bw() + theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1), axis.title = element_text(size = 12, face = "bold")) + scale_fill_manual("Feature",values = RColorBrewer::brewer.pal(9,"BuGn"))
+#dev.off()
+
+#jpeg("../output/other/All_ind_comp.DMR_genom_feat_stacked_barplot.jpg", width = 6, height = 5, units = "in", res =300)
+ggplot(Comp_feat_combined,aes(x = region, y = ..count.., fill = factor(feature), group = feature)) + geom_bar(position = "fill", color = "black") + scale_y_continuous(labels=scales::percent) + ylab("% of total regions") + facet_wrap(~comparison,ncol = 4) + theme_bw() + theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1), axis.title = element_text(size = 12, face = "bold")) + scale_fill_manual("Feature",values = RColorBrewer::brewer.pal(9,"BuGn"))
+#dev.off()
+```
+# Run Chi square test on feature proportions
+
+Symbiont
+```{r}
+# create table with feature totals for DMRs
+sym_DMR_feat_summary <- data.frame(table(sym_DMR_feat$V8))
+#rename columns
+colnames(sym_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+sym_feat_summary <- data.frame(table(symb_feat$V4))
+#rename columns
+colnames(sym_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+sym_feat_summ <- merge(sym_DMR_feat_summary, sym_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+sym_feat_summ[is.na(sym_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+sym_feat_DMR_total <- sum(sym_feat_summ$numDMR)
+sym_feat_region_total <- sum(sym_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(sym_feat_summ)){ #loop through each feature
+  numBKGDReg <-sym_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- sym_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (sym_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (sym_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(sym_feat_summ$feature[i]),paste0("Not",sym_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(sym_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+sym_chi_table <- chi_table
+sym_chi_table$comparison <- "sym"
+```
+
+temperature
+```{r}
+# create table with feature totals for DMRs
+trt_DMR_feat_summary <- data.frame(table(trt_DMR_feat$V8))
+#rename columns
+colnames(trt_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+trt_feat_summary <- data.frame(table(trt_feat$V4))
+#rename columns
+colnames(trt_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+trt_feat_summ <- merge(trt_DMR_feat_summary, trt_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+trt_feat_summ[is.na(trt_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+trt_feat_DMR_total <- sum(trt_feat_summ$numDMR)
+trt_feat_region_total <- sum(trt_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(trt_feat_summ)){ #loop through each feature
+  numBKGDReg <-trt_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- trt_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (trt_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (trt_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(trt_feat_summ$feature[i]),paste0("Not",trt_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(trt_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+trt_chi_table <- chi_table
+trt_chi_table$comparison <- "temp"
+```
+Symbiont:treatment
+```{r}
+# create table with feature totals for DMRs
+sym.trt_DMR_feat_summary <- data.frame(table(sym.trt_DMR_feat$V8))
+#rename columns
+colnames(sym.trt_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+sym.trt_feat_summary <- data.frame(table(sym.trt_feat$V4))
+#rename columns
+colnames(sym.trt_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+sym.trt_feat_summ <- merge(sym.trt_DMR_feat_summary, sym.trt_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+sym.trt_feat_summ[is.na(sym.trt_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+sym.trt_feat_DMR_total <- sum(sym.trt_feat_summ$numDMR)
+sym.trt_feat_region_total <- sum(sym.trt_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(sym.trt_feat_summ)){ #loop through each feature
+  numBKGDReg <-sym.trt_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- sym.trt_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (sym.trt_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (sym.trt_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(sym.trt_feat_summ$feature[i]),paste0("Not",sym.trt_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(sym.trt_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+sym.trt_chi_table <- chi_table
+sym.trt_chi_table$comparison <- "sym"
+
+
+all_chi <- rbind(sym_chi_table,trt_chi_table,sym.trt_chi_table)
+#all_chi$feature <- gsub("promoter", "put.promoter",all_chi$feature)
+all_chi$feature <- gsub("similarity", "repeat.region",all_chi$feature)
+write.csv(all_chi,"../output/DMR_genom_feat_chi_table.csv", row.names = FALSE, quote = FALSE)
+
+all_chi[which(all_chi$p.adj<= 0.05), c(1,7,13:14)]
+
+```
+Cc vs Dc
+```{r}
+# create table with feature totals for DMRs
+Ctrol_DMR_feat_summary <- data.frame(table(Cc_Dc_DMR_feat$V8))
+#rename columns
+colnames(Ctrol_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+Ctrol_feat_summary <- data.frame(table(Ctrol_feat$V4))
+#rename columns
+colnames(Ctrol_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+Ctrol_feat_summ <- merge(Ctrol_DMR_feat_summary, Ctrol_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+Ctrol_feat_summ[is.na(Ctrol_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+Ctrol_feat_DMR_total <- sum(Ctrol_feat_summ$numDMR)
+Ctrol_feat_region_total <- sum(Ctrol_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(Ctrol_feat_summ)){ #loop through each feature
+  numBKGDReg <-Ctrol_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- Ctrol_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (Ctrol_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (Ctrol_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(Ctrol_feat_summ$feature[i]),paste0("Not",Ctrol_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(Ctrol_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+Ctrol_chi_table <- chi_table
+Ctrol_chi_table$comparison <- "Cc_Dc"
+```
+Ch vs Dh
+```{r}
+# create table with feature totals for DMRs
+Heated_DMR_feat_summary <- data.frame(table(Cc_Dc_DMR_feat$V8))
+#rename columns
+colnames(Heated_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+Heated_feat_summary <- data.frame(table(Heated_feat$V4))
+#rename columns
+colnames(Heated_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+Heated_feat_summ <- merge(Heated_DMR_feat_summary, Heated_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+Heated_feat_summ[is.na(Heated_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+Heated_feat_DMR_total <- sum(Heated_feat_summ$numDMR)
+Heated_feat_region_total <- sum(Heated_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(Heated_feat_summ)){ #loop through each feature
+  numBKGDReg <-Heated_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- Heated_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (Heated_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (Heated_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(Heated_feat_summ$feature[i]),paste0("Not",Heated_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(Heated_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+Heated_chi_table <- chi_table
+Heated_chi_table$comparison <- "Ch_Dh"
+```
+Cc vs Ch
+```{r}
+# create table with feature totals for DMRs
+SymbC_DMR_feat_summary <- data.frame(table(Cc_Dc_DMR_feat$V8))
+#rename columns
+colnames(SymbC_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+SymbC_feat_summary <- data.frame(table(SymbC_feat$V4))
+#rename columns
+colnames(SymbC_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+SymbC_feat_summ <- merge(SymbC_DMR_feat_summary, SymbC_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+SymbC_feat_summ[is.na(SymbC_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+SymbC_feat_DMR_total <- sum(SymbC_feat_summ$numDMR)
+SymbC_feat_region_total <- sum(SymbC_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(SymbC_feat_summ)){ #loop through each feature
+  numBKGDReg <-SymbC_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- SymbC_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (SymbC_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (SymbC_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(SymbC_feat_summ$feature[i]),paste0("Not",SymbC_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(SymbC_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+SymbC_chi_table <- chi_table
+SymbC_chi_table$comparison <- "Cc_Ch"
+```
+Cc vs Dc
+```{r}
+# create table with feature totals for DMRs
+SymbD_DMR_feat_summary <- data.frame(table(Cc_Dc_DMR_feat$V8))
+#rename columns
+colnames(SymbD_DMR_feat_summary) <- c("feature", "numDMR")
+ 
+# create table with feature totals for background regions
+SymbD_feat_summary <- data.frame(table(SymbD_feat$V4))
+#rename columns
+colnames(SymbD_feat_summary) <- c("feature", "numRegion")
+#merge background and DMR feature totals 
+SymbD_feat_summ <- merge(SymbD_DMR_feat_summary, SymbD_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+SymbD_feat_summ[is.na(SymbD_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+SymbD_feat_DMR_total <- sum(SymbD_feat_summ$numDMR)
+SymbD_feat_region_total <- sum(SymbD_feat_summ$numRegion)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(SymbD_feat_summ)){ #loop through each feature
+  numBKGDReg <-SymbD_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- SymbD_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (SymbD_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (SymbD_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(SymbD_feat_summ$feature[i]),paste0("Not",SymbD_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(SymbD_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(sym_feat_summ,chi_table, by = "feature")
+SymbD_chi_table <- chi_table
+SymbD_chi_table$comparison <- "Dc_Dh"
+
+```
+```{r merge all chisq_results}
+all_chi_comp <- rbind(Ctrol_chi_table,Heated_chi_table,SymbC_chi_table, SymbD_chi_table)
+all_chi_comp$feature <- gsub("similarity", "repeat.region",all_chi_comp$feature)
+write.csv(all_chi_comp,"../output/DMR_genom_feat_all_contrasts_chi_table.csv", row.names = FALSE, quote = FALSE)
+
+all_chi_comp[which(all_chi_comp$p.adj<= 0.05), c(1,7,13:14)]
+
+```
+
+```{r load feature annotation}
+
+all_features <- read.delim("../analyses/DMR_output/DMR_Genomic_feature_analysis/all.grps_features.txt", sep = "\t"  , header = FALSE)
+
+colnames(all_features) <- c("chr", "start", "end","chr1", "start1", "end1", "feature")
+
+all_features$ID <- paste(all_features$chr,":",all_features$start,"-",all_features$end, sep = "")
+all_features$ID <- gsub("__.*__.*:",":",all_features$ID)
+
+all_features$ID1 <- paste(all_features$chr1,":",all_features$start1,"-",all_features$end1, sep = "")
+all_features$ID1 <- gsub("__.*__.*:",":",all_features$ID1)
+
+#extract IDs corresponding to the features
+features <- as.factor(all_features$feature)
+ID_features <- all_features[,c(7:9)]
+
+gene_body <- as.vector(ID_features$ID[which(ID_features$feature == "intron" | ID_features$feature == "CDS" | ID_features$feature == "five_prime_UTR" | ID_features$feature == "three_prime_UTR")])
+
+gene_body1 <- as.vector(ID_features$ID1[which(ID_features$feature == "intron" | ID_features$feature == "exon" | ID_features$feature == "three_prime_UTR")])
+
+intron <- as.vector(ID_features$ID[which(ID_features$feature == "intron")])
+CDS <- as.vector(ID_features$ID[which(ID_features$feature =="CDS")])
+three_prime_UTR <- as.vector(ID_features$ID[which(ID_features$feature == "three_prime_UTR")])
+five_prime_UTR <- as.vector(ID_features$ID[which(ID_features$feature == "five_prime_UTR")]) 
+
+promoter <-  as.vector(ID_features$ID[which(ID_features$feature == "put_promoter")])
+
+transposable <-as.vector(ID_features$ID[which(ID_features$feature == "similarity")]) 
+
+other_intergenic <- as.vector(ID_features$ID[which(ID_features$feature == "intergenic")]) 
+
+```
+
+#### Genomic features per cluster heatmap all_DMRs
+```{r}
+# read in features that DMRs overlap with
+a_clust_feat <- fread("../analyses/DMR_output/bed/a_cluster_annot.bed", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+b_clust_feat <- fread("../analyses/DMR_output/bed/b_cluster_annot.bed", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+c_clust_feat <- fread("../analyses/DMR_output/bed/c_cluster_annot.bed", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+d_clust_feat <- fread("../analyses/DMR_output/bed/d_cluster_annot.bed", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+e_clust_feat <- fread("../analyses/DMR_output/bed/e_cluster_annot.bed", header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+
+#organize data for plotting
+a_clust_feat <- a_clust_feat[,-c(1:3)]
+a_clust_feat$cluster <- "a"
+b_clust_feat <- b_clust_feat[,-c(1:3)]
+b_clust_feat$cluster <- "b"
+c_clust_feat <- c_clust_feat[,-c(1:3)]
+c_clust_feat$cluster <- "c"
+d_clust_feat <- d_clust_feat[,-c(1:3)]
+d_clust_feat$cluster <- "d"
+e_clust_feat <- e_clust_feat[,-c(1:3)]
+e_clust_feat$cluster <- "e"
+clust_merge_feat <- rbind(a_clust_feat, b_clust_feat, c_clust_feat, d_clust_feat, e_clust_feat)
+clust_merge_feat <- clust_merge_feat[, c(5,1:4)]
+colnames(clust_merge_feat) <- c("cluster", "scaffold", "start", "end", "feature")
+clust_merge_feat$feature <- gsub("put_promoter", "putative.promoter",clust_merge_feat$feature)
+clust_merge_feat$feature <- gsub("similarity", "repeat.region",clust_merge_feat$feature)
+clust_merge_feat$feature <- gsub("three_prime_UTR", "UTR",clust_merge_feat$feature)
+clust_merge_feat$feature <- gsub("five_prime_UTR", "UTR",clust_merge_feat$feature)
+clust_merge_feat$feature <- factor(clust_merge_feat$feature, levels = c("intergenic", "repeat.region", "putative.promoter", "CDS", "intron", "UTR"))
+levels(clust_merge_feat$feature)
+
+#plot
+jpeg("../output/other/feat_heatmap_cluster_stacked_barplot.jpg", width = 4, height = 3, units = "in", res =300)
+ggplot(clust_merge_feat,aes(x = cluster, y = ..count.., fill = factor(feature), group = feature)) + geom_bar(position = "fill", color = "black") + scale_y_continuous(labels=scales::percent) + ylab("% of total regions") + theme_bw() + theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1), axis.title = element_text(size = 12, face = "bold")) + scale_fill_manual("Feature",values = RColorBrewer::brewer.pal(9,"BuGn"))
+dev.off()
+
+# create table with feature totals for background regions
+all_feat_summary <- rbind(symb_feat,trt_feat)
+all_feat_summary <- rbind(all_feat_summary, sym.trt_feat)
+all_feat_summary <- unite(all_feat_summary, group, V1:V2:V3, sep = ":", remove = TRUE)
+all_feat_summary <- all_feat_summary[!duplicated(all_feat_summary$group),]
+all_feat_summary <- data.frame(table(all_feat_summary$V4))
+colnames(all_feat_summary) <- c("feature", "numRegion")
+
+# create table with feature totals for DMRs in each cluster
+a_clust_feat_summary <- data.frame(table(a_clust_feat$V7))
+b_clust_feat_summary <- data.frame(table(b_clust_feat$V7))
+c_clust_feat_summary <- data.frame(table(c_clust_feat$V7))
+d_clust_feat_summary <- data.frame(table(d_clust_feat$V7))
+e_clust_feat_summary <- data.frame(table(e_clust_feat$V7))
+#rename columns
+colnames(a_clust_feat_summary) <- c("feature", "numDMR")
+colnames(b_clust_feat_summary) <- c("feature", "numDMR")
+colnames(c_clust_feat_summary) <- c("feature", "numDMR")
+colnames(d_clust_feat_summary) <- c("feature", "numDMR")
+colnames(e_clust_feat_summary) <- c("feature", "numDMR")
+
+#merge background and DMR feature totals 
+a_feat_summ <- merge(a_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+a_feat_summ <- merge(a_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+b_feat_summ <- merge(b_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+c_feat_summ <- merge(c_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+d_feat_summ <- merge(d_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+e_feat_summ <- merge(e_clust_feat_summary, all_feat_summary, by = "feature", all = TRUE)
+#replace NAs with 0
+a_feat_summ[is.na(a_feat_summ)] <- 0
+b_feat_summ[is.na(b_feat_summ)] <- 0
+c_feat_summ[is.na(c_feat_summ)] <- 0
+d_feat_summ[is.na(d_feat_summ)] <- 0
+e_feat_summ[is.na(e_feat_summ)] <- 0
+#create variables for the sum of all DMR and background features
+a_feat_DMR_total <- sum(a_feat_summ$numDMR)
+a_feat_region_total <- sum(a_feat_summ$numRegion)
+b_feat_DMR_total <- sum(b_feat_summ$numDMR)
+b_feat_region_total <- sum(b_feat_summ$numRegion)
+c_feat_DMR_total <- sum(c_feat_summ$numDMR)
+c_feat_region_total <- sum(c_feat_summ$numRegion)
+d_feat_DMR_total <- sum(d_feat_summ$numDMR)
+d_feat_region_total <- sum(d_feat_summ$numRegion)
+e_feat_DMR_total <- sum(e_feat_summ$numDMR)
+e_feat_region_total <- sum(e_feat_summ$numRegion)
+
+#calcualte propdiff (propDMR/propRegion) per feature
+
+a_feat_prop <- a_feat_summ %>%
+  mutate(propDMR=a_feat_summ$numDMR/a_feat_DMR_total,
+         propRegion=a_feat_summ$numRegion/a_feat_region_total) %>%
+  mutate(propDiff=propDMR-propRegion,
+         cluste="cluster a")
+b_feat_prop <- b_feat_summ %>%
+  mutate(propDMR=b_feat_summ$numDMR/b_feat_DMR_total,
+         propRegion=b_feat_summ$numRegion/b_feat_region_total) %>%
+  mutate(propDiff=propDMR-propRegion,
+         cluste="cluster b")
+c_feat_prop <- c_feat_summ %>%
+  mutate(propDMR=c_feat_summ$numDMR/c_feat_DMR_total,
+         propRegion=c_feat_summ$numRegion/c_feat_region_total) %>%
+  mutate(propDiff=propDMR-propRegion,
+         cluste="cluster c")
+d_feat_prop <- d_feat_summ %>%
+  mutate(propDMR=d_feat_summ$numDMR/d_feat_DMR_total,
+         propRegion=d_feat_summ$numRegion/d_feat_region_total) %>%
+  mutate(propDiff=propDMR-propRegion,
+         cluste="cluster d")
+e_feat_prop <- e_feat_summ %>%
+  mutate(propDMR=e_feat_summ$numDMR/e_feat_DMR_total,
+         propRegion=e_feat_summ$numRegion/e_feat_region_total) %>%
+  mutate(propDiff=propDMR-propRegion,
+         cluste="cluster e")
+
+clust_feat_sum <- rbind(a_feat_prop,b_feat_prop,c_feat_prop,d_feat_prop,e_feat_prop)
+clust_feat_sum$feature <- gsub("put_promoter", "putative.promoter",clust_feat_sum$feature)
+clust_feat_sum$feature <- gsub("similarity", "repeat.region",clust_feat_sum$feature)
+clust_feat_sum$feature <- gsub("three_prime_UTR", "UTR",clust_feat_sum$feature)
+clust_feat_sum$feature <- gsub("five_prime_UTR", "UTR",clust_feat_sum$feature)
+clust_feat_sum$feature <- factor(clust_feat_sum$feature, levels = c("intergenic", "repeat.region", "putative.promoter", "CDS", "intron", "UTR"))
+levels(clust_feat_sum$feature)
+
+#plot
+jpeg("../output/figures/feat_cluster_prop_diff_barplot.jpg", width = 2.5, height = 4, units = "in", res =300)
+ggplot() + 
+  geom_bar(data = clust_feat_sum, aes(x=feature, y=propDiff, fill=feature), stat = "identity", color = "black") + scale_y_continuous(breaks=c(-0.2,0,0.2), limits = c(-0.2,0.2)) + ylab("proportion difference") + facet_grid(rows = "cluste") + theme_bw() +  theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1), axis.title = element_text(size = 12, face = "bold"), axis.ticks.x = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + scale_fill_manual("Feature",values = RColorBrewer::brewer.pal(9,"BuGn")) + geom_hline(yintercept = 0, linetype = "dashed", color = "red", size=0.2) + theme(legend.position = "none")
+dev.off()
+```
+
+```{r}
+#create a table with Chi stats for each feature per cluster
+#CLUSTER A
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(a_feat_summ)){ #loop through each feature
+  numBKGDReg <-a_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- a_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (a_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (a_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(a_feat_summ$feature[i]),paste0("Not",a_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(a_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(a_feat_summ,chi_table, by = "feature")
+a_chi_table <- chi_table
+a_chi_table$cluster <- "a"
+#CLUSTER B
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(b_feat_summ)){ #loop through each feature
+  numBKGDReg <-b_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- b_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (b_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (b_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(b_feat_summ$feature[i]),paste0("Not",b_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(b_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(b_feat_summ,chi_table, by = "feature")
+b_chi_table <- chi_table
+b_chi_table$cluster <- "b"
+#CLUSTER C
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(c_feat_summ)){ #loop through each feature
+  numBKGDReg <-c_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- c_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (c_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (c_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(c_feat_summ$feature[i]),paste0("Not",c_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(c_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(c_feat_summ,chi_table, by = "feature")
+c_chi_table <- chi_table
+c_chi_table$cluster <- "c"
+#CLUSTER D
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(d_feat_summ)){ #loop through each feature
+  numBKGDReg <-d_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- d_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (d_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (d_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(d_feat_summ$feature[i]),paste0("Not",d_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(d_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(d_feat_summ,chi_table, by = "feature")
+d_chi_table <- chi_table
+d_chi_table$cluster <- "d"
+#CLUSTER E
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(e_feat_summ)){ #loop through each feature
+  numBKGDReg <-e_feat_summ$numRegion[i] # variable for number of background regions for specific feature
+  numDMRreg <- e_feat_summ$numDMR[i] # variable for number of DMRs for specific feature
+  totDMR <- (e_feat_DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (e_feat_region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(e_feat_summ$feature[i]),paste0("Not",e_feat_summ$feature[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$feature <- as.character(e_feat_summ$feature[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(e_feat_summ,chi_table, by = "feature")
+e_chi_table <- chi_table
+e_chi_table$cluster <- "e"
+
+all_clust_chi_comp <- rbind(a_chi_table,b_chi_table,c_chi_table,d_chi_table,e_chi_table)
+all_clust_chi_comp$feature <- gsub("similarity", "repeat.region",all_clust_chi_comp$feature)
+write.csv(all_clust_chi_comp,"../output/DMR_genom_feat_all_clusters_chi_table.csv", row.names = FALSE, quote = FALSE)
+
+all_clust_chi_comp[which(all_clust_chi_comp$p.adj<= 0.1), c(1,7,13:14)] 
+```
+
+## 69 genes were represented in the DMRs so next I did a short GO enrichment analysis
+GO analysis for genes in sig DMR heatmap
+```{r}
+#load pre-contructed GO slim terms 
+all_GO_slim <- read.table("../data/Genome/Mcav_annotation_gene_slims.tab", sep = "\t")
+Gene.GO.IDs <- read.table("../data/Genome/Mcav_annotation_Gene.GO.IDs", sep = "\t", header = TRUE)
+GoSlims <- read.csv("../data/Genome/GO-GOslim.sorted", header=FALSE, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)
+colnames(GoSlims) <- c("GO.IDs", "GO.Term", "GO.Slim.Term", "Cat") #rename columns
+Gene.GO.IDs.slims <- merge(Gene.GO.IDs, GoSlims, by="GO.IDs", all = TRUE)
+Gene.GO.IDs.slims <- Gene.GO.IDs.slims[-1,]
+#load genes gff
+Genes <- read.csv("../data/Genome/Mcav.GFFannotation.gene.gff", header=F, sep="\t", na.string="NA", skip=3, stringsAsFactors = F) #read in data file
+Genes <- Genes[,c(1,4,5,9)] #select desired columns only
+colnames(Genes) <- c("scaffold", "start", "stop", "gene") #rename columns
+Genes$gene <- gsub(";.*","",Genes$gene) #remove extra characters
+Genes$gene <- gsub("ID=","",Genes$gene) #remove extra characters
+#Load annotation file
+Annot <- read.csv("../data/Genome/Mcavernosa_trinotate_annotation_report.xls.txt", header=TRUE, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)
+colnames(Annot)[1] <- "gene"
+Annot <- merge(Annot, Genes, by="gene")
+#load KOG
+gene2kog <- read.csv("../data/Genome/Mcavernosa_iso2kog.tab", header=F, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)%>%
+   filter(!V2 == "")
+colnames(gene2kog) <- c("gene", "KOG_term")
+
+#Load annot significant DMR overlaping with genes by cluster of the heatmap
+a_clust_gene <- read.table("../analyses/DMR_output/bed//a_cluster_gene.bed", sep = "\t")
+a_clust_gene <- a_clust_gene[,-c(1:3,5:6,9:11)]
+colnames(a_clust_gene) <- c("scaffold", "start","end","gene")
+a_clust_gene$gene <- gsub(";.*","",a_clust_gene$gene) #remove extra characters
+a_clust_gene$gene <- gsub("ID=","",a_clust_gene$gene) #remove extra characters
+a_clust_annot_full <- merge(a_clust_gene, Annot[,-c(17:19)], by="gene")
+a_clust_GO_slim <- merge(a_clust_gene, Gene.GO.IDs.slims, by="gene")
+a_clust_Slim_count <- count(a_clust_GO_slim, vars=GO.Slim.Term)
+a_clust_KOG <- merge(a_clust_gene, gene2kog, by="gene")
+
+b_clust_gene <- read.table("../analyses/DMR_output/bed/b_cluster_gene.bed", sep = "\t")
+b_clust_gene <- b_clust_gene[,-c(1:3,5:6,9:11)]
+colnames(b_clust_gene) <- c("scaffold", "start","end","gene")
+b_clust_gene$gene <- gsub(";.*","",b_clust_gene$gene) #remove extra characters
+b_clust_gene$gene <- gsub("ID=","",b_clust_gene$gene) #remove extra characters
+b_clust_annot_full <- merge(b_clust_gene, Annot[,-c(17:19)], by="gene")
+b_clust_GO_slim <- merge(b_clust_gene, Gene.GO.IDs.slims, by="gene")
+b_clust_Slim_count <- count(b_clust_GO_slim, vars=GO.Slim.Term)
+b_clust_KOG <- merge(b_clust_gene, gene2kog, by="gene")
+
+c_clust_gene <- read.table("../analyses/DMR_output/bed/c_cluster_gene.bed", sep = "\t")
+c_clust_gene <- c_clust_gene[,-c(1:3,5:6,9:11)]
+colnames(c_clust_gene) <- c("scaffold", "start","end","gene")
+c_clust_gene$gene <- gsub(";.*","",c_clust_gene$gene) #remove extra characters
+c_clust_gene$gene <- gsub("ID=","",c_clust_gene$gene) #remove extra characters
+c_clust_annot_full <- merge(c_clust_gene, Annot[,-c(17:19)], by="gene")
+c_clust_GO_slim <- merge(c_clust_gene, Gene.GO.IDs.slims, by="gene")
+c_clust_Slim_count <- count(c_clust_GO_slim, vars=GO.Slim.Term)
+c_clust_KOG <- merge(c_clust_gene, gene2kog, by="gene")
+
+d_clust_gene <- read.table("../analyses/DMR_output/bed/d_cluster_gene.bed", sep = "\t")
+d_clust_gene <- d_clust_gene[,-c(1:3,5:6,9:11)]
+colnames(d_clust_gene) <- c("scaffold", "start","end","gene")
+d_clust_gene$gene <- gsub(";.*","",d_clust_gene$gene) #remove extra characters
+d_clust_gene$gene <- gsub("ID=","",d_clust_gene$gene) #remove extra characters
+d_clust_annot_full <- merge(d_clust_gene, Annot[,-c(17:19)], by="gene")
+d_clust_GO_slim <- merge(d_clust_gene, Gene.GO.IDs.slims, by="gene")
+d_clust_Slim_count <- count(d_clust_GO_slim, vars=GO.Slim.Term)
+d_clust_KOG <- merge(d_clust_gene, gene2kog, by="gene")
+
+e_clust_gene <- read.table("../analyses/DMR_output/bed/e_cluster_gene.bed", sep = "\t")
+e_clust_gene <- e_clust_gene[,-c(1:3,5:6,9:11)]
+colnames(e_clust_gene) <- c("scaffold", "start","end","gene")
+e_clust_gene$gene <- gsub(";.*","",e_clust_gene$gene) #remove extra characters
+e_clust_gene$gene <- gsub("ID=","",e_clust_gene$gene) #remove extra characters
+e_clust_annot_full <- merge(e_clust_gene, Annot[,-c(17:19)], by="gene")
+e_clust_GO_slim <- merge(e_clust_gene, Gene.GO.IDs.slims, by="gene")
+e_clust_Slim_count <- count(e_clust_GO_slim, vars=GO.Slim.Term)
+e_clust_KOG <- merge(e_clust_gene, gene2kog, by="gene")
+
+all_KOG <- rbind(a_clust_KOG,b_clust_KOG,c_clust_KOG,d_clust_KOG,e_clust_KOG)
+all_KOG_count <-count(all_KOG, vars=KOG_term) 
+
+### 
+#Load annot significant DMR overlaping with genes by factor (symb, temp, Inter)
+all_sig_symb_gene <- read.table("../analyses/DMR_output/bed/all_symb_sig_gene.bed", sep = "\t")
+all_sig_symb_gene <- all_sig_symb_gene[,-c(1:3,5:6,9:11)]
+colnames(all_sig_symb_gene) <- c("scaffold", "start","end","gene")
+all_sig_symb_gene$gene <- gsub(";.*","",all_sig_symb_gene$gene) #remove extra characters
+all_sig_symb_gene$gene <- gsub("ID=","",all_sig_symb_gene$gene) #remove extra characters
+all_sig_symb_annot_full <- merge(all_sig_symb_gene, Annot[,-c(17:19)], by="gene")
+all_sig_symb_GO_slim <- merge(all_sig_symb_gene, Gene.GO.IDs.slims, by="gene")
+all_sig_symb_Slim_count <- count(all_sig_symb_GO_slim, vars=GO.Slim.Term)
+all_sig_symb_KOG <- merge(all_sig_symb_gene, gene2kog, by="gene")
+all_sig_symb_KOG$factor <- "symb"
+
+all_sig_temp_gene <- read.table("../analyses/DMR_output/bed/all_temp_sig_gene.bed", sep = "\t")
+all_sig_temp_gene <- all_sig_temp_gene[,-c(1:3,5:6,9:11)]
+colnames(all_sig_temp_gene) <- c("scaffold", "start","end","gene")
+all_sig_temp_gene$gene <- gsub(";.*","",all_sig_temp_gene$gene) #remove extra characters
+all_sig_temp_gene$gene <- gsub("ID=","",all_sig_temp_gene$gene) #remove extra characters
+all_sig_temp_annot_full <- merge(all_sig_temp_gene, Annot[,-c(17:19)], by="gene")
+all_sig_temp_GO_slim <- merge(all_sig_temp_gene, Gene.GO.IDs.slims, by="gene")
+all_sig_temp_Slim_count <- count(all_sig_temp_GO_slim, vars=GO.Slim.Term)
+all_sig_temp_KOG <- merge(all_sig_temp_gene, gene2kog, by="gene")
+all_sig_temp_KOG$factor <- "temp"
+
+all_sig_Inter_gene <- read.table("../analyses/DMR_output/bed/all_Inter_sig_gene.bed", sep = "\t")
+all_sig_Inter_gene <- all_sig_Inter_gene[,-c(1:3,5:6,9:11)]
+colnames(all_sig_Inter_gene) <- c("scaffold", "start","end","gene")
+all_sig_Inter_gene$gene <- gsub(";.*","",all_sig_Inter_gene$gene) #remove extra characters
+all_sig_Inter_gene$gene <- gsub("ID=","",all_sig_Inter_gene$gene) #remove extra characters
+all_sig_Inter_annot_full <- merge(all_sig_Inter_gene, Annot[,-c(17:19)], by="gene")
+all_sig_Inter_GO_slim <- merge(all_sig_Inter_gene, Gene.GO.IDs.slims, by="gene")
+all_sig_Inter_Slim_count <- count(all_sig_Inter_GO_slim, vars=GO.Slim.Term)
+all_sig_Inter_KOG <- merge(all_sig_Inter_gene, gene2kog, by="gene")
+all_sig_Inter_KOG$factor <- "Inter"
+
+all_DMR_KOG <- rbind(all_sig_symb_KOG,all_sig_temp_KOG,all_sig_Inter_KOG)
+
+temp <- count(all_DMR_KOG, vars=KOG_term, wt_var=factor)
+
+all_sig_genes <- rbind(all_sig_symb_gene, all_sig_temp_gene, all_sig_Inter_gene)
+all_sig_genes_annot <- merge(Annot, all_sig_genes, by= "gene")
+
+ganno <- all_sig_genes_annot %>%
+  select(gene, sprot_Top_BLASTP_hit, gene_ontology_blast)
+
+# Replace some  delimiter characters that disrupt HTML parsing
+ganno <- mutate_if(ganno, is.character, str_replace_all, pattern = "\\^", replacement = "\\\\")
+ganno <- mutate_if(ganno, is.character, str_replace_all, pattern = "\\`", replacement = "||||")
+
+
+table <- knitr::kable(ganno) %>% 
+  kable_styling("striped") %>% 
+  column_spec(1:3, width_max = "50em") %>% 
+  scroll_box(height = "50em", width = "100%")
+
+```
+
+Repetitive regions overlapping DMR 
+```{r}
+TE_annot <- read.csv("../analyses/Genomic_features/Mcav_repeat_summary.tsv", sep = "\t", header = FALSE)
+TE_annot$V4 <- gsub("/.*", "", TE_annot$V4)
+TE_annot <- TE_annot %>%
+  mutate(loc.ID = paste(V1, V2, V3, sep = ":"))
+
+summ_TE_all <- data.frame(table(TE_annot$V4))
+colnames(summ_TE_all)[1] <- "repeat_type"  
+
+# annot DMR in repeats for all contrasts 
+CcCh_DMR_repeat <- Cc_Ch_DMR_feat[which(Cc_Ch_DMR_feat$V8 == "similarity")] %>%
+  mutate(loc.ID = paste(V5, V6, V7, sep = ":")) %>%
+  select(V4, loc.ID)
+CcCh_DMR_repeat_annot <- merge(CcCh_DMR_repeat, TE_annot, by = "loc.ID")
+CcCh_DMR_repeat_annot <- CcCh_DMR_repeat_annot[,c(3:6,2)]
+colnames(CcCh_DMR_repeat_annot) <- c("scaf","start","end", "repeat_type","contrast")
+summ_DMR_repeat_CcCh <- data.frame(table(CcCh_DMR_repeat_annot$repeat_type)) 
+colnames(summ_DMR_repeat_CcCh)[1] <- "repeat_type" 
+
+#merge background and DMR feature totals 
+CcCh_rep_summ <- merge(summ_DMR_repeat_CcCh, summ_TE_all, by = "repeat_type", all = TRUE)
+#replace NAs with 0
+CcCh_rep_summ[is.na(CcCh_rep_summ)] <- 0
+#create variables for the sum of all DMR and background features
+DMR_total <- sum(CcCh_rep_summ$Freq.x)
+region_total <- sum(CcCh_rep_summ$Freq.y)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(CcCh_rep_summ)){ #loop through each feature
+  numBKGDReg <-CcCh_rep_summ$Freq.y[i] # variable for number of background regions for specific feature
+  numDMRreg <- CcCh_rep_summ$Freq.x[i] # variable for number of DMRs for specific feature
+  totDMR <- (DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(CcCh_rep_summ$repeat_type[i]),paste0("Not",CcCh_rep_summ$repeat_type[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$repeat_type <- as.character(CcCh_rep_summ$repeat_type[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(CcCh_rep_summ, chi_table, by = "repeat_type")
+CcCh_rep_chi_table <- chi_table
+CcCh_rep_chi_table$comparison <- "Cc_Ch"
+
+DcDh_DMR_repeat <- Dc_Dh_DMR_feat[which(Dc_Dh_DMR_feat$V8 == "similarity")] %>%
+  mutate(loc.ID = paste(V5, V6, V7, sep = ":")) %>%
+  select(V4, loc.ID)
+DcDh_DMR_repeat_annot <- merge(DcDh_DMR_repeat, TE_annot, by = "loc.ID")
+DcDh_DMR_repeat_annot <- DcDh_DMR_repeat_annot[,c(3:6,2)]
+colnames(DcDh_DMR_repeat_annot) <- c("scaf","start","end", "repeat_type","contrast")
+summ_DMR_repeat_DcDh <- data.frame(table(DcDh_DMR_repeat_annot$repeat_type)) 
+colnames(summ_DMR_repeat_DcDh)[1] <- "repeat_type" 
+
+#merge background and DMR feature totals 
+DcDh_rep_summ <- merge(summ_DMR_repeat_DcDh, summ_TE_all, by = "repeat_type", all = TRUE)
+#replace NAs with 0
+DcDh_rep_summ[is.na(DcDh_rep_summ)] <- 0
+#create variables for the sum of all DMR and background features
+DMR_total <- sum(DcDh_rep_summ$Freq.x)
+region_total <- sum(DcDh_rep_summ$Freq.y)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(DcDh_rep_summ)){ #loop through each feature
+  numBKGDReg <-DcDh_rep_summ$Freq.y[i] # variable for number of background regions for specific feature
+  numDMRreg <- DcDh_rep_summ$Freq.x[i] # variable for number of DMRs for specific feature
+  totDMR <- (DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(DcDh_rep_summ$repeat_type[i]),paste0("Not",DcDh_rep_summ$repeat_type[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$repeat_type <- as.character(DcDh_rep_summ$repeat_type[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(DcDh_rep_summ, chi_table, by = "repeat_type")
+DcDh_rep_chi_table <- chi_table
+DcDh_rep_chi_table$comparison <- "Dc_Dh"
+
+
+CcDc_DMR_repeat <- Cc_Dc_DMR_feat[which(Cc_Dc_DMR_feat$V8 == "similarity")] %>%
+  mutate(loc.ID = paste(V5, V6, V7, sep = ":")) %>%
+  select(V4, loc.ID)
+CcDc_DMR_repeat_annot <- merge(CcDc_DMR_repeat, TE_annot, by = "loc.ID")
+CcDc_DMR_repeat_annot <- CcDc_DMR_repeat_annot[,c(3:6,2)]
+colnames(CcDc_DMR_repeat_annot) <- c("scaf","start","end", "repeat_type","contrast")
+summ_DMR_repeat_CcDc <- data.frame(table(CcDc_DMR_repeat_annot$repeat_type)) 
+colnames(summ_DMR_repeat_CcDc)[1] <- "repeat_type" 
+
+#merge background and DMR feature totals 
+CcDc_rep_summ <- merge(summ_DMR_repeat_CcDc, summ_TE_all, by = "repeat_type", all = TRUE)
+#replace NAs with 0
+CcDc_rep_summ[is.na(CcDc_rep_summ)] <- 0
+#create variables for the sum of all DMR and background features
+DMR_total <- sum(CcDc_rep_summ$Freq.x)
+region_total <- sum(CcDc_rep_summ$Freq.y)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(CcDc_rep_summ)){ #loop through each feature
+  numBKGDReg <-CcDc_rep_summ$Freq.y[i] # variable for number of background regions for specific feature
+  numDMRreg <- CcDc_rep_summ$Freq.x[i] # variable for number of DMRs for specific feature
+  totDMR <- (DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(CcDc_rep_summ$repeat_type[i]),paste0("Not",CcDc_rep_summ$repeat_type[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$repeat_type <- as.character(CcDc_rep_summ$repeat_type[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(CcDc_rep_summ, chi_table, by = "repeat_type")
+CcDc_rep_chi_table <- chi_table
+CcDc_rep_chi_table$comparison <- "Cc_Dc"
+
+ChDh_DMR_repeat <- Ch_Dh_DMR_feat[which(Ch_Dh_DMR_feat$V8 == "similarity")] %>%
+  mutate(loc.ID = paste(V5, V6, V7, sep = ":")) %>%
+  select(V4, loc.ID)
+ChDh_DMR_repeat_annot <- merge(ChDh_DMR_repeat, TE_annot, by = "loc.ID")
+ChDh_DMR_repeat_annot <- ChDh_DMR_repeat_annot[,c(3:6,2)]
+colnames(ChDh_DMR_repeat_annot) <- c("scaf","start","end", "repeat_type","contrast")
+summ_DMR_repeat_ChDh <- data.frame(table(ChDh_DMR_repeat_annot$repeat_type)) 
+colnames(summ_DMR_repeat_ChDh)[1] <- "repeat_type" 
+
+#merge background and DMR feature totals 
+ChDh_rep_summ <- merge(summ_DMR_repeat_ChDh, summ_TE_all, by = "repeat_type", all = TRUE)
+#replace NAs with 0
+ChDh_rep_summ[is.na(ChDh_rep_summ)] <- 0
+#create variables for the sum of all DMR and background features
+DMR_total <- sum(ChDh_rep_summ$Freq.x)
+region_total <- sum(ChDh_rep_summ$Freq.y)
+#create a table with Chi stats for each feature
+chi_table <- data.frame() #create empty df
+for(i in 1:nrow(ChDh_rep_summ)){ #loop through each feature
+  numBKGDReg <-ChDh_rep_summ$Freq.y[i] # variable for number of background regions for specific feature
+  numDMRreg <- ChDh_rep_summ$Freq.x[i] # variable for number of DMRs for specific feature
+  totDMR <- (DMR_total - numDMRreg) # variable for total number background regions in all features minus the number of background regions for specific feature
+  totBKGD <- (region_total - numBKGDReg)  # variable for total number DMRs in all features minus the number of DMRs for specific feature
+  ct <- matrix(c(numBKGDReg,numDMRreg,totBKGD,totDMR), ncol = 2) # create contingency table
+  colnames(ct) <- c(as.character(ChDh_rep_summ$repeat_type[i]),paste0("Not",ChDh_rep_summ$repeat_type[i])) #label columns of contingency table
+  rownames(ct) <- c("Region", "DMR") #lab rows of contingency table
+  print(ct)
+  x <-  data.frame(broom::tidy(prop.test(ct, correct = FALSE))) # create data frame storing the Chi sq stats results
+  x$repeat_type <- as.character(ChDh_rep_summ$repeat_type[i]) # add feature name to chi sq df
+  chi_table <- rbind(chi_table,x) #add chi sq stats to master table
+}
+#adjust chi pvalues
+chi_table$p.adj <- p.adjust(chi_table$p.value, method = "fdr")
+#merge chi table with region counts
+chi_table <- merge(ChDh_rep_summ, chi_table, by = "repeat_type")
+ChDh_rep_chi_table <- chi_table
+ChDh_rep_chi_table$comparison <- "Ch_Dh"
+
+rep_chi_table_all <- rbind(CcCh_rep_chi_table,CcDc_rep_chi_table,DcDh_rep_chi_table,ChDh_rep_chi_table)
+rep_chi_table_all[which(rep_chi_table_all$p.adj<= 0.1), c(1,7,13:14)] 
+
+
+```
+

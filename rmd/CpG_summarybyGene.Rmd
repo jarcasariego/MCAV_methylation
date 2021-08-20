@@ -1,0 +1,41 @@
+---
+title: "CpG_summarybyGene"
+author: "Javier Rodriguez Casariego"
+date: "2/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Short script is used to combine the CpG-By-Gene counts and summary statistics into a single data.frame
+library(dplyr)
+library(matrixStats)
+## Pathes
+# Should be set to folder with all CpGByGene Summary txt files
+
+# Gene level summary count for all CpGs in the genome
+aC <- read.delim("../analyses/Genomic_features/20210120_CpGbyGeneSummary/20210120_allCpG_Count.txt",sep="\t",header=FALSE)
+aC_rev <- data.frame(label=paste0(aC$V1,"_",aC$V2,"_",aC$V3),chr=aC$V1,start=aC$V2,end=aC$V3,all_count=aC$V4)
+
+# Gene level summary count for all CpGs with at least 5x for each individuals
+covC <- read.delim("../analyses/Genomic_features/20210120_CpGbyGeneSummary/20210120_cov5CpG_Count.txt",sep="\t",header=FALSE)
+covC_rev <- data.frame(label=paste0(covC$V1,"_",covC$V2,"_",covC$V3),cov5_count=covC$V4)
+# Gene level summary stats for all CpGs with at least 5x for each individuals
+summaryC <- read.delim("../analyses/Genomic_features/20210120_CpGbyGeneSummary/20210120_cov5CpG_Summarize.txt",sep="\t",header=FALSE)
+summaryC_rev <- data.frame(label=paste0(summaryC$V1,"_",summaryC$V2,"_",summaryC$V3),summaryC[,4:24])
+summaryC_label <-c("label","mean_beta","mean_Cc","mean_Ch","mean_Dc","mean_Dh","sd_Cc","sd_Ch","sd_Dc","sd_Dh","sd_mean_AmongTrt","cv_Cc","cv_Ch","cv_Dc","cv_Dh","cv_mean_AmongTrt","diff_Trt","diff_Symb","diff_SymbC_Trt","diff_SymbD_Trt",         "diff_Ctrol_Symb","diff_Heated_Symb")
+
+colnames(summaryC_rev) <- summaryC_label
+
+# Series of left joines to add the CpG count and summary information
+comb <- left_join(aC_rev,covC_rev)
+comb <- left_join(comb,summaryC_rev)
+# Save combined data.frame in an .RData format (can be read into R with readRDS()) in the same folder at the original CpG
+# count and summary txt files.
+saveRDS(comb,paste0("../analyses/Genomic_features/20210119_CpGbyGene_Summary/gene_CpGcoverageSummary.RData"))
+
+```
+

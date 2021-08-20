@@ -1,0 +1,39 @@
+#!/bin/bash
+
+###Filter and Concatenate Datasets 
+
+mkdir files_DMG
+
+multiIntersectBed -i \
+_5x.tab_files/*_5x.tab
+> files_DMG/all.5x.bed
+
+cat files_DMG/all.5x.bed | awk '$4 ==24' > files_DMG/all.filtered.24.5x.bed
+ 
+#Use intersectBed to find where loci and genes intersect, allowing loci to be mapped to annotated genes
+#wb: Print all lines in the second file
+#a: file that ends in posOnly
+#b: annotated gene list
+#Save output in a new file that has the same base name and ends in -Annotated.txt
+
+for f in _5x.tab_files/*_5x.tab
+do
+  intersectBed \
+  -wb \
+  -a ${f} \
+  -b ${annot.tracks}/Mcav.GFFannotation.gene.sorted.gff \
+  > _files_DMG/${f}_gene
+done
+
+#intersect with concat file to subset only those positions found in all samples
+for f in files_DMG/*_gene
+do
+  intersectBed \
+  -a ${f} \
+  -b files_DMG/all.filtered.24.5x.bed  \
+  > _gene_CpG.bed_files/${f}_CpG.bed
+done
+wc -l _gene_CpG.bed_files/*_CpG.bed
+
+conda deactivate
+

@@ -1,0 +1,710 @@
+---
+title: "CpG methylation distribution"
+author: "Javier Rodriguez Casariego"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+load libraries
+```{r libraries}
+library(data.table)
+library(methylKit)
+library(gplots)
+library(ggplot2) #install.packages('ggplot2')
+library(dplyr)
+library(broom)
+library(RColorBrewer)
+library(egg) #install.packages('egg')
+library(purrr)
+library(nlme)
+library(vegan)
+library(tidyverse)
+library(adegenet)
+library(DESeq2) #BiocManager::install('DESeq2')
+library(pheatmap)
+library(cowplot)
+library(ggpubr)
+library(ggpattern) # install.packages("remotes") # remotes::install_github("coolbutuseless/ggpattern")
+```
+
+```{r set functions}
+## ggplot theme
+theme_custom <- function() {
+  theme_bw(base_size = 10) %+replace%    #, base_family = "Arial"
+    theme(
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(), 
+      panel.background = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA),
+      legend.background = element_rect(fill = NA, colour = NA),
+      axis.text.x = element_text(angle=45, hjust=1, vjust = 1)#,
+      #legend.title = element_text(size = 8), 
+      #legend.text = element_text(size = 7)
+    )
+}
+## ggplot labeller
+colnames <- c(
+  `20` = "genet 1",
+  `22` = "genet 2",
+  `26` = "genet 3"
+)
+
+contrastnames <- c(
+  `Dc.Cc` = expression("D"[C]~"vs."~"C"[C]),
+  `Dh.Dc` = expression("D"[H]~"vs."~"D"[C]),
+  `Ch.Cc` = expression("C"[H]~"vs."~"C"[C])
+)
+
+global_labeller <- labeller(
+  colony = colnames,
+  contrast = contrastnames,
+  .default = "label_parsed"
+)
+```
+
+```{r load data}
+meth <- read.csv("../analyses/methyKitOutput/methylKitObj_cov5Filtered_medianNormalized_united.csv")
+meta <- read.csv("../data/Treatment_metadata.csv")
+meta_final <- meta[,c(3:11)]
+meta_final <- arrange(meta_final, Code)
+meta_final <- meta_final[-24, ]
+ID <- as.character(meta_final$Code)
+ID <- ID[-24] # CH-26-2 was eliminated 
+trt <- as.character(meta_final$TreatComb)
+trt <- trt[-24] # CH-26-2 was eliminated
+
+meth_matrix <- fread("../analyses/methyKitOutput/count_matrix_5X/countMatrix_cov5Filtered_medianNormalized_beta.csv")
+
+```
+
+```{r prepare data for analysis}
+
+allsamples_CpG <- cbind(meth[,c(1:4)], meth_matrix)
+colnames(allsamples_CpG) <- c("chr", "start", "end", "strand", ID)
+
+
+###Filter regions present in over 75% of samples per treatment
+
+df <- data.frame() #create empty data frame to bind filtered rows into
+for(i in (1:nrow(allsamples_CpG))){
+  Cc <- allsamples_CpG[i,17:21] #define columns from the category CC
+  Ch <- allsamples_CpG[i,22:27] #define columns from the category CH
+  Dc <- allsamples_CpG[i,5:10] #define columns from the category BC
+  Dh <- allsamples_CpG[i,11:16] #define columns from the category BH
+    if(length(which(is.na(Cc))) < 2 & length(which(is.na(Ch))) < 2 & length(which(is.na(Dc))) < 2 & length(which(is.na(Dh))) < 2){
+  df <- rbind(df,allsamples_CpG[i,]) #conditional statement: if less than 2 samples/category have NA for % methylation bind the whole row to the new dataframe
+  }
+}
+#save df as a specific variable
+all_CpG <- df
+
+all_CpG$ID <- paste(all_CpG$chr,":",all_CpG$start,"-",all_CpG$end, sep = "")
+all_CpG$ID <- gsub("__.*__.*:",":",all_CpG$ID)
+
+#clean metadata and create variable for both treatments
+meta_data0 <- meta_final %>%
+  mutate(sym = recode(X1st.Treatment, b = "D", c = "C"),
+         sample = paste0(species, colony, "-", core),
+         group = paste(sym, X2nd.Treatment, sep = ""),
+         colony = factor(colony),
+         colony.group = interaction(colony, group)) %>%
+  mutate_if(is.character, as.factor)
+meta_data0 <- meta_data0 [-c(1,4,5,7)]
+meta_data <- meta_data0 %>%
+  arrange(Code) %>%    # order rows by sample name
+  column_to_rownames(var = "Code") # set sample name to rownames
+colnames(meta_data) <- c("colony","core","trt2","Tank","sym","sample","group","colony.group")
+
+#build %meth per CpG matrix
+perc_methCpG <- all_CpG[,c(28,5:27)]
+  
+perc_meth <- perc_methCpG[,-1] %>%
+    select(sort(names(.)))
+
+row.names(perc_meth) <- perc_methCpG$ID 
+
+```
+
+```{r pcoa euclidean distance on raw percent data}
+
+sampleDists_Eu <- dist(t(perc_meth), method = "manhattan")
+sampleDist_EuMatrix <- as.matrix(sampleDists_Eu)
+
+mds <- as.data.frame(meta_data) %>% 
+  cbind(cmdscale(sampleDist_EuMatrix)) %>%
+  mutate(fillcol = factor(ifelse(trt2 == "h", NA, colony))) %>%    # create factor for fill color in plot
+  mutate(genet = case_when(colony == 20 ~ "1", colony == 22 ~ "2", colony == 26 ~ "3")) %>%
+  mutate(alphaval = ifelse(trt2 == "h", 1, 0))
+
+# Calculate group centroids for plotting
+mds <- mds %>%
+  group_by(colony, sym, trt2) %>%
+  dplyr::summarise(c1 = mean(`1`), c2 = mean(`2`)) %>%    
+  full_join(mds)
+
+# Calculate variance explained by each PC
+MDS <- cmdscale(sampleDist_EuMatrix, eig = TRUE)
+vexpl <- round(MDS$eig*100/sum(MDS$eig),1)[1:2]
+
+# Plot with spiders
+pcoa <- ggplot(mds, aes(color = genet, shape = sym)) +
+  geom_segment(mapping = aes(x = `1`, y = `2`, xend = c1, yend = c2),
+               lwd = 0.25, col = "grey") +
+  geom_point(size = 2, aes(x = c1, y = c2, fill = genet, alpha = as.character(alphaval))) +
+  geom_point(size = 2, aes(x = c1, y = c2), fill = ifelse(mds$alphaval, "white", NA)) +
+  geom_point(size = 0.7, aes(x = `1`, y = `2`, fill = genet, alpha = as.character(alphaval)), show.legend = F) +
+  geom_point(size = 0.7, aes(x = `1`, y = `2`), fill = ifelse(mds$alphaval, "white", NA), show.legend = F) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_alpha_manual(values = c(1, 0), name = "temp", labels = c("control", "heated")) +
+  guides(shape = guide_legend(order = 2, override.aes = list(fill = "black"))) +
+  guides(alpha = guide_legend(override.aes = list(shape = 21, alpha = 1, fill = c("black", "white")))) +
+  labs(x = paste0("PC1 [", vexpl[1],"%]"), y = paste0("PC2 [", vexpl[2],"%]")) +
+  theme_custom() +
+  theme(legend.spacing.y = unit(0, "cm"))
+
+pcoa
+
+ggsave(filename = "../output/figures/pcoa.png", pcoa, width = 109, height = 84.5, units = "mm")
+
+```
+
+The PCoA shows that global gene DNA methylation varies significantly by colony along PC2. Within colonies 22 (green), samples cluster mostly by symbiont type along PC1, with less (but still some) separation between control corals and heated corals along both PC1 and/or PC2. Colony 20 shows a very tight clustering of all its samples. Interestingly, the effects of symbiont type on colonies 22 and 26 share the same directions along PC1. Samples of colony 26 separate mostly by heat treatment, with little  effect of symbiont on global methylation. This suggests each colony is responding differently to symbiont and heat treatments.
+
+### DAPC analysis
+
+```{r prepare data}
+
+coldata <- meta_data %>%
+  rownames_to_column("ID") %>%
+  as_tibble() %>%
+  select(ID, colony, sym, trt2, group)
+colcounts <- perc_meth %>%
+  rownames_to_column("gene") %>%
+  as_tibble() %>%
+  gather(key = "ID", value = "count", -gene) %>%
+  mutate(count=count*100) %>%
+  mutate(count=round(count, 0))
+countData <- (round(perc_meth*100, 0))
+
+
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = coldata,
+                              design = ~ group)
+vsd <- vst(dds, blind = FALSE)
+# create batch-colony-removed vst perc
+vsd2 <- limma::removeBatchEffect(assay(vsd), vsd$colony)
+
+# use batch-colony-removed vst counts
+dat <- data.frame(vsd2) 
+
+# use regular vst counts
+dat1 <- data.frame(assay(vsd))
+
+```
+
+
+```{r Define number of PC to maintain}
+# How many PCs should be kept?
+dapc2 <- dapc(t(dat1), coldata$group, n.da=3, n.pca=100)
+temp <- optim.a.score(dapc2, n.sim = 25)
+my.dapc <- function(n.pca) dapc(t(dat), coldata$group, n.pca = n.pca, n.da = 3)
+
+scatter(dapc2, cell = 1, pch = 18:23, cstar = 0, scree.da = TRUE, scree.pca=TRUE, posi.pca = "topright",
+        mstree = FALSE, lwd = 2, lty = 2)
+
+library(furrr)
+
+plan(multiprocess)
+
+my.dapc.res <- tibble(n.pca = 10:30) %>%
+  mutate(dapc = map(n.pca, my.dapc), 
+         a.score = furrr::future_map(dapc, a.score, n.sim = 500),
+         mean = map_dbl(a.score, ~ .$mean),
+         cumvar = map_dbl(dapc, ~ .$var))
+
+my.dapc.res %>%
+   arrange(-mean) 
+
+# Retaining 11 PC's gives highest a-score (7%), and utilizes 91% of variance although the optimization proposes 13 as the best number of PCs. Therefore, let's use 17 PC's for the DA. 
+
+```
+
+
+```{r run DAPC batch-removed}
+
+#first run with batch-colony-removed vst perc
+dp1 <- dapc(t(dat), coldata$group,
+            n.pca = 11, n.da = 3)   # Retain 15 PCs and 3 discriminant functions
+scatter(dp1,bg="white",scree.da=TRUE,scree.pca=TRUE,legend=TRUE,solid=.4, label.inds = list(air = 2, pch = NA)) 
+scatter(dp1, 1, 1,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+scatter(dp1, 2, 2,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+scatter(dp1, 3, 3,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+
+varexpl <- round((dp1$eig/sum(dp1$eig))[1:2] * 100, 1)
+
+# Axis one represents the effect of symbiont. Axis two represents the heat stress responses of both C and D corals.Note that D corals diverge further from control on this axis
+
+#scatter(dp1,2,2, bg="white", scree.da=FALSE, legend=TRUE, solid=.4)
+
+dapc <- tibble(sample = rownames(dp1$ind.coord),
+               grp = dp1$grp,
+               LD1 = dp1$ind.coord[,1],
+               LD2 = dp1$ind.coord[,2])
+dapc <- dapc %>%
+  group_by(grp) %>%
+  summarize(c1 = mean(LD1),
+            c2 = mean(LD2)) %>%
+  full_join(dapc)
+```
+
+```{r run DAPC regular vst}
+
+dp2 <- dapc(t(dat1), coldata$group,
+            n.pca = 12, n.da = 3)   # Retain 15 PCs and 2 discriminant functions
+
+scatter(dp2,bg="white",scree.da=TRUE,scree.pca=TRUE,legend=TRUE,solid=.4) 
+scatter(dp2, 1, 1,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+scatter(dp2, 2, 2,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+scatter(dp2, 3, 3,scree.da=FALSE, legend=TRUE, solid=.4,bg="white")
+
+varexpl2 <- round((dp2$eig/sum(dp2$eig))[1:2] * 100, 1)
+
+# Axis one represents the effect of symbiont. Axis two represents the heat stress responses of both C and D corals.Note that D corals diverge further from control on this axis
+
+#scatter(dp1, bg = "white", legend = TRUE, scree.da = FALSE)
+#contrib <- loadingplot(dp2$var.contr, axis = 1, thres = 0.0002, lab.jitter = 1)
+dapc1 <- tibble(sample = rownames(dp2$ind.coord),
+               grp = dp2$grp,
+               LD1 = dp2$ind.coord[,1],
+               LD2 = dp2$ind.coord[,2])
+dapc1 <- dapc1 %>%
+  group_by(grp) %>%
+  summarize(c1 = mean(LD1),
+            c2 = mean(LD2)) %>%
+  full_join(dapc1)
+```
+
+```{r plot DAPC results}
+
+# Plot with spiders (batch-removed)
+dapc.fig <- 
+  ggplot(dapc, aes(shape = factor(grepl("^D", grp)), 
+                             fill = factor(grepl("h", grp)))) +
+  geom_segment(mapping = aes(x = LD1, y = LD2, xend = c1, yend = c2), lwd = 0.25, col = "grey") +
+  geom_point(aes(x = c1, y = c2), size = 2) +
+  geom_point(aes(x = LD1, y = LD2), size = 0.7, show.legend = FALSE) +
+  scale_shape_manual(name = "sym", labels = c("C", "D"), values = c(21, 24)) +
+  scale_fill_manual(name = "temp", labels = c("control", "heated"), values = c("black", "white")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, size = 2))) +
+  guides(shape = guide_legend(override.aes = list(fill = "black", size = 2))) +
+  labs(x = paste0("LD1 [", varexpl[1],"%]"), y = paste0("LD2 [", varexpl[2],"%]")) +
+  theme_custom() +
+  #theme(legend.position = c(0.25, 0.15)) +
+  theme(plot.margin = margin(t = 0, r = 0.9, unit = "cm")) +
+  #theme(legend.spacing.y = unit(0, "cm"),
+  #      legend.spacing.x = unit(0, "cm")) +
+  #theme(legend.box = "horizontal") +
+  theme(legend.position = "none") +
+  annotate(geom = "text", x = 4.2, y = -1.6, adj = 1, label = "sym / temp", size = 3.5) +
+  annotate(geom = "text", x = 4.2, y = -2.825, adj = 1, size = 2.5,
+           label = "C / control\nC / heated\nD / control\nD / heated") +
+  annotate(geom = "point", x = 3.0, y = seq(from = -2.15, by = -0.45, length.out = 4), 
+           size = 2, shape = c(21, 21, 24, 24), fill = c("black", "white", "black", "white"))
+
+
+xplot <- ggdensity(dapc, x = "LD1", fill = "grp", lwd = 0.25, 
+                   palette = c("black", "grey70", "grey40", "white")) +
+  xlim(-4,4.5) + clean_theme() + rremove("legend")
+yplot <- ggdensity(dapc, x = "LD2", fill = "grp", lwd = 0.25, 
+                   palette = c("black", "grey70", "grey40", "white"))+
+  xlim(-6,6) + clean_theme() + rremove("legend")  
+
+fig3 <- plot_grid(dapc.fig)
+
+# Plot with spiders (unmodified vst)
+dapc.fig1 <- 
+  ggplot(dapc1, aes(shape = factor(grepl("^D", grp)), 
+                             fill = factor(grepl("h", grp)))) +
+  geom_segment(mapping = aes(x = LD1, y = LD2, xend = c1, yend = c2), lwd = 0.25, col = "grey") +
+  geom_point(aes(x = c1, y = c2), size = 2) +
+  geom_point(aes(x = LD1, y = LD2), size = 0.7, show.legend = FALSE) +
+  scale_shape_manual(name = "sym", labels = c("C", "D"), values = c(21, 24)) +
+  scale_fill_manual(name = "temp", labels = c("control", "heated"), values = c("black", "white")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21, size = 2))) +
+  guides(shape = guide_legend(override.aes = list(fill = "black", size = 2))) +
+  labs(x = paste0("LD1 [", varexpl2[1],"%]"), y = paste0("LD2 [", varexpl[2],"%]")) +
+  theme_custom() +
+  #theme(legend.position = c(0.25, 0.15)) +
+  theme(plot.margin = margin(t = 0, r = 0.9, unit = "cm")) +
+  #theme(legend.spacing.y = unit(0, "cm"),
+  #      legend.spacing.x = unit(0, "cm")) +
+  #theme(legend.box = "horizontal") +
+  theme(legend.position = "none") +
+  annotate(geom = "text", x = 3.8, y = -1.6, adj = 1, label = "sym / temp", size = 3.5) +
+  annotate(geom = "text", x = 3.8, y = -2.825, adj = 1, size = 2.5,
+           label = "C / control\nC / heated\nD / control\nD / heated") +
+  annotate(geom = "point", x = 2.6, y = seq(from = -2.15, by = -0.45, length.out = 4), 
+           size = 2, shape = c(21, 21, 24, 24), fill = c("black", "white", "black", "white"))
+
+xplot1 <- 
+  ggdensity(dapc1, x = "LD1", fill = "grp", lwd = 0.25,
+            palette = c("black", "white", "black", "white")) +
+  annotate(geom = "point", x = c(-2,-1.6, 0.1, 3.6), y = c(0.6,0.7,0.55,0.5), 
+           pch = c(21, 21, 24, 24), fill = c("white", "black", "white", "black")) +
+  clean_theme() + rremove("legend") + 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+  
+#ggplot(dapc, aes(x = LD1, fill = grp)) + geom_density(alpha = 0.5, adjust = 1)
+
+fig3.1 <- plot(dapc.fig1)
+
+fig3 #colony corrected
+fig3.1 # regular vst DAPC
+
+ggsave(filename = "../output/figures/DAPC_CpG_batch_corrected.png", plot = fig3, width = 120, height = 80, units = "mm")
+ggsave(filename = "../output/figures/DAPC_CpG_uncorrected.png", plot = fig3.1, width = 120, height = 80, units = "mm")
+ggsave(filename = "../output/figures/DAPC_LD1_batch_corrected.png", plot = xplot, width = 120, height = 20, units = "mm")
+ggsave(filename = "../output/figures/DAPC_LD2_batch_corrected.png", plot = yplot, width = 80, height = 20, units = "mm")
+
+```
+
+### Variance partitioning
+
+Partition total methylome variance among explanatory factors (symbiont, heating, and their interaction) for each colony. Based on the PCoA above, it appears that treatment should explain the most variance in colony 26, and similar to symbiont variance in colony 22. Colony 20 is not clear but seems to flip the direction of treatment effect along PC1.
+
+```{r}
+library(variancePartition)  # BiocManager::install('variancePartition')
+library(doParallel)
+```
+
+```{r varpart_col, eval = FALSE, results = 'hide'}
+
+# Join count data with sample data, and nest vs count data by colony
+all <- left_join(coldata, colcounts) %>%
+  filter(colony %in% c(20, 22, 26)) %>%
+  nest(-colony) 
+
+# Create DESeqDataSet for each colony, filter genes mean count > 1 within each colony, and vst transform
+all <- all %>%
+  mutate(sdat = map(data, ~ data.frame(column_to_rownames(distinct(., sample, sym, trt2, group), "sample"))),
+         counts = map(data, ~ spread(select(., sample, gene, count), sample, count)),
+         counts = map(counts, ~ as.matrix(column_to_rownames(., "gene"))),
+         dds = map2(counts, sdat, ~ DESeqDataSetFromMatrix(countData = .x, colData = .y, design = ~ group)),
+         vsd = map(dds, ~ vst(., blind = FALSE)))  # Variance Stabilizing Transformation
+
+perc_meth[105:110,]
+
+saveRDS(all, "../analyses/CpGMethylation_Charact/DESeqDataSet_all_vst_transformed.RData")
+
+assay(all$dds)
+
+
+# Run variance partition analysis for each colony
+numCores <- detectCores() -1
+cl <- makeCluster(numCores); registerDoParallel(cl)
+
+all <- all %>%
+  mutate(vp = map2(vsd, sdat, ~ fitExtractVarPartModel(
+    exprObj = assay(.x), data = .y, formula = ~ (1|sym) + (1|trt2) + (1|sym:trt2)
+    )))
+stopCluster(cl)
+
+save(all, file = "../analyses/CpGMethylation_Charact/all.RData")
+
+# Calculate sum of variance explained by each source across all genes for each colony
+load("../analyses/CpGMethylation_Charact/all.RData")
+allsumm <- all %>% mutate(vpsum = map(vp, ~ summarise_all(., sum)))
+
+save(allsumm, file = "../analyses/CpGMethylation_Charact/varpartsumm.RData")
+
+duplicated.matrix(as.matrix(assay(all$vsd[[1]])))
+all$vp[[3]] %>%
+  as.data.frame(.) %>%
+  summarise_all(., median)
+
+#load(file = "../analyses/CpGMethylation_Charact/all.RData")
+
+plotVarPart(all$vp[[3]])
+rowSums(assay(all$vsd[[3]]))
+mean(all$vp[[3]]$sym)
+weighted.mean(all$vp[[3]]$sym, w = rowSums(assay(all$vsd[[3]])))
+
+varsum <- colSums(all$vp[[3]])
+varsum[1] / sum(varsum)
+
+```
+
+
+Plot sources of variance for each colony
+```{r plot_varpart, eval = FALSE}
+
+load(file = "../analyses/CpGMethylation_Charact/varpartsumm.RData")
+
+varpartfig <- allsumm %>% 
+  unnest_legacy(vpsum, .drop = T) %>%
+  gather(source, value, -colony) %>%
+  group_by(colony) %>%
+  mutate(relvar = value / sum(value)) %>%   # TOTAL VARIANCE NOT SAME FOR EACH COLONY -- NORMALIZE WITHIN COLONY
+  filter(source != "Residuals") %>%
+  mutate(source = recode(source, trt2 = "temp", `sym:trt2` = "sym:temp")) %>%
+  ggplot(aes(x = source, y = relvar*100, fill = colony)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ colony, labeller = global_labeller) +
+  labs(x = "", y = "% variance explained") +
+  theme_custom() +
+  theme(legend.position = "none",
+        strip.text.x = element_text(size = 6))
+
+varpartfig
+
+ggsave(filename = "../output/figures/varpart.png", plot=varpartfig, width = 50, height = 84.5, units = "mm")
+
+fig2 <- cowplot::plot_grid(pcoa, varpartfig, rel_widths = c(2, 1), labels = "AUTO")
+ggsave(filename = "../output/figures/PCoA_varPart.png", fig2, width = 169, height = 84.5, units = "mm")
+
+
+
+allsumm %>% 
+  unnest(vpsum, .drop = T) %>%
+  gather(source, value, -colony) %>%
+  group_by(colony) %>%
+  mutate(relvar = value / sum(value)) %>%   # TOTAL VARIANCE NOT SAME FOR EACH COLONY -- NORMALIZE WITHIN COLONY
+  filter(source != "Residuals") %>%
+  summarise(total_explained = sum(relvar))
+
+```
+
+```{r generate meth summary by feature} 
+
+refCoord <- readRDS("../analyses/methyKitOutput/methylKitObj_cov5Filtered_medianNormalized_united.RData")
+coord <- paste0(refCoord$chr,"_",refCoord$start-1,"_",refCoord$end+1)
+methCount <- as.matrix(read.csv("../analyses/methyKitOutput/count_matrix_5X/countMatrix_cov5Filtered_medianNormalized_methylCCounts.csv"))
+totalCount <- as.matrix(read.csv("../analyses/methyKitOutput/count_matrix_5X/countMatrix_cov5Filtered_medianNormalized_totalCounts.csv"))
+beta <- methCount/totalCount
+beta <- data.frame(beta)
+
+mC <- data.frame(coord,methCount)
+colnames(mC) <- c("coord",meta_final$Code)
+tC <- data.frame(coord,totalCount)
+colnames(tC) <- c("coord",meta_final$Code)
+b <- data.frame(coord,beta)
+colnames(b) <- c("coord",meta_final$Code)
+
+# Feature bed files
+setwd("../analyses/Genomic_features/20210119_FeatureCpGDist/")
+exonF <- read.delim("20210119_CpG_cov5_Exon.txt",sep="\t",header=FALSE)
+geneF <- read.delim("20210119_CpG_cov5_gene.txt",sep="\t",header=FALSE)
+IntronF <- read.delim("20210119_CpG_cov5_Intron.txt",sep="\t",header=FALSE)
+IntergenicF <- read.delim("20210119_CpG_cov5_Intergenic.txt",sep="\t",header=FALSE)
+repeatF <- read.delim("20210119_CpG_cov5_repeatL.txt",sep="\t",header=FALSE)
+
+# Remove redundant CpGs in each feature (this can happen when exons overlap for instance)
+exonF_unique <- exonF[!duplicated(paste0(exonF$V4,"_",exonF$V5,"_",exonF$V6)),4:6]
+exonF_unique <- data.frame(coord=paste0(exonF_unique$V4,"_",exonF_unique$V5,"_",exonF_unique$V6))
+geneF_unique <- geneF[!duplicated(paste0(geneF$V4,"_",geneF$V5,"_",geneF$V6)),4:6]
+geneF_unique <- data.frame(coord=paste0(geneF_unique$V4,"_",geneF_unique$V5,"_",geneF_unique$V6))
+IntronF_unique <- IntronF[!duplicated(paste0(IntronF$V4,"_",IntronF$V5,"_",IntronF$V6)),4:6]
+IntronF_unique <- data.frame(coord=paste0(IntronF_unique$V4,"_",IntronF_unique$V5,"_",IntronF_unique$V6))
+IntergenicF_unique <- IntergenicF[!duplicated(paste0(IntergenicF$V4,"_",IntergenicF$V5,"_",IntergenicF$V6)),4:6]
+IntergenicF_unique <- data.frame(coord=paste0(IntergenicF_unique$V4,"_",IntergenicF_unique$V5,"_",IntergenicF_unique$V6))
+repeatF_unique <- repeatF[!duplicated(paste0(repeatF$V4,"_",repeatF$V5,"_",repeatF$V6)),4:6]
+repeatF_unique <- data.frame(coord=paste0(repeatF_unique$V4,"_",repeatF_unique$V5,"_",repeatF_unique$V6))
+# Overlap DNAm count and beta values with features
+
+# Methylation Counts
+exon_mC <- left_join(exonF_unique,mC) 
+gene_mC <- left_join(geneF_unique,mC)
+Intron_mC <- left_join(IntronF_unique,mC)
+Intergenic_mC <- left_join(IntergenicF_unique,mC)
+repeat_mc <- left_join(repeatF_unique,mC)
+feature_mC <- list(exon=exon_mC,gene=gene_mC,Intron=Intron_mC,Intergenic=Intergenic_mC,Repeat=repeat_mc)
+
+# Total Counts (coverage)
+exon_tC <- left_join(exonF_unique,tC) 
+gene_tC <- left_join(geneF_unique,tC)
+Intron_tC <- left_join(IntronF_unique,tC)
+Intergenic_tC <- left_join(IntergenicF_unique,tC)
+repeat_tC <- left_join(repeatF_unique,tC)
+feature_tC <- list(exon=exon_tC,gene=gene_tC,Intron=Intron_tC,Intergenic=Intergenic_tC, Repeat=repeat_tC)
+
+# Beta
+exon_beta <- left_join(exonF_unique,b) 
+gene_beta <- left_join(geneF_unique,b)
+Intron_beta <- left_join(IntronF_unique,b)
+Intergenic_beta <- left_join(IntergenicF_unique,b)
+repeat_beta <- left_join(repeatF_unique,b)
+feature_beta <- list(exon=exon_beta,gene=gene_beta,Intron=Intron_beta,Intergenic=Intergenic_beta, Repeat=repeat_beta)
+
+feature_all <- list(mC=feature_mC,tC=feature_tC,beta=feature_beta)
+# Summarize beta by treatment x time
+# median of mean methylation among samples
+med_meth <- NULL
+ID_vec <- NULL
+trt <- as.character(NULL)
+time <- as.character(NULL)
+feature <- NULL
+featureNames <- c("Exon","gene","Intron","Intergenic","Repeat")
+for(i in 1:length(feature_beta)){
+  med_meth <- c(med_meth,colMedians(as.matrix(feature_beta[[1]][,2:ncol(feature_beta[[1]])])))
+  ID_vec <- c(ID_vec,meta_final$Code)
+  trt <- c(trt,as.character(meta_final$X2nd.Treatment))
+  symb <- c(time,as.character(meta_final$X1st.Treatment))
+  feature <- c(feature,rep(featureNames[i],times=c(nrow(meta_final))))
+}
+medianSummary <- data.frame(feature=feature,Treatment=trt,Symbiont=symb,ID=ID_vec,median_methylation=med_meth)
+
+saveDate <- "20210120"
+
+setwd("../analyses/CpGMethylation_Charact/")
+saveRDS(feature_all,paste0(saveDate,"_AllCountsList_cov5_byFeature.RData"))
+write.csv(medianSummary,paste0(saveDate,"medianMethylationByFeatureSummaryTable.csv"))
+```
+
+
+```{r}
+### All CpGs by feature ###
+# Example: meth$mC$exon would retrieve a table for
+#          the methylated cytosine counts (mC) within exons 
+meth <- readRDS("../analyses/CpGMethylation_Charact/20210120_AllCountsList_cov5_byFeature.RData")
+# total Count data for genes
+meth_total_gene <- meth$tC$gene[,2:24] # remove first column which has coordinate information
+sumCountMethylation_gene <- colSums(meth_total_gene,na.rm = TRUE)
+# beta values for genes
+meth_beta <- meth$beta
+meth_beta_gene <- meth$beta$gene[,2:24]
+### Calculate median methylation globally for each individual for each feature
+med_values <- NULL
+name_values <- NULL
+for(i in 1:length(meth$beta)){
+  temp <-  as.matrix(meth$beta[[i]][,2:24])
+  nm <- rep(names(meth$beta)[i],times=23)
+  temp_medians <- colMedians(temp,na.rm = TRUE)
+  
+  med_values <- c(med_values,temp_medians)
+  name_values <- c(name_values,nm)
+}
+IDs <- rep(meta_final$Code,length(meth$beta))
+Treatment <- rep(meta_final$X2nd.Treatment,length(meth$beta))
+Symb <- rep(meta_final$X1st.Treatment,length(meth$beta))
+median_df <- data.frame(IDs,Treatment,Symb,feature=name_values,median=med_values)
+# Remove gene since it is redundant (exon + intron)
+median_dfnoGene <- median_df[median_df$feature != "gene",]
+median_dfnoGene$feature <- as.factor(as.character(median_dfnoGene$feature))
+# Reorder levels of feature
+median_dfnoGene$feature <- factor(median_dfnoGene$feature,levels=c("exon","Intron","Intergenic","Repeat" ))
+levels(median_dfnoGene$feature) <- c("Exon","Intron","Intergenic","Repeat")
+median_dfnoGene$Symb <- factor(median_dfnoGene$Symb,levels=c("c","b"))
+rm(meth)
+
+
+# Full model including features
+model_out <- aov(median~Treatment*Symb*feature,data=median_dfnoGene)
+(out <- summary(model_out))
+
+```
+
+```{r Plot PCoA/DAPC by feature}
+
+library(matrixStats)
+# color palette
+col_perm <- c("#93b16b","#c9e0ab","#E6550D","#e3a07f")
+
+# Both heat treatment and feature are significantly correlated with methylation.
+
+#### PCA plots separated by feature ####
+# 1 = Exon, 2 = gene, 3 = Intron, 4 = intergenic region
+pca_plots <- list()
+plot_titles <- c("Exons","Gene Body","Introns","Intergenic","Repeat")
+for(i in 1:length(meth_beta)){
+  temp <- as.matrix(meth_beta[[i]][,2:ncol(meth_beta[[i]])])
+  temp[is.na(temp)] <- 0
+  class(temp) <- "numeric"
+  pca <- prcomp(t(temp))
+  eigs <- pca$sdev^2
+  temp_df <- data.frame(x=pca$x[,1],y=pca$x[,2],condition=meta_final$TreatComb)
+  p_temp <- ggplot(temp_df,aes(x=x,y=y,colour=condition,shape=condition)) + 
+    geom_point(size=4) + 
+    theme_cowplot() + 
+    scale_colour_manual(values = col_perm[c(3,4,1,2)],
+                        labels=c('SymD_C','SymD_H','SymC_C','SymC_H')) + 
+    scale_shape_manual(values = c(15,15,17,17),
+                       labels=c('SymD_C','SymD_H','SymC_C','SymC_H')) +
+    labs(x=paste0("PC1 (",round(eigs[1] / sum(eigs)*100,1),"%)"),
+         y=paste0("PC2 (",round(eigs[2] / sum(eigs)*100,1),"%)"),
+         title = plot_titles[i],
+         colour="",
+         shape="") +
+    theme(plot.title = element_text(hjust = 0.5))
+  pca_plots[[i]] <- p_temp + theme(legend.position="none") 
+}
+# Extract the legend from one of the PCA plots
+legend <- get_legend(
+ # create some space to the left of the legend
+ p_temp + theme(legend.box.margin = margin(0, 0, 0, 12),
+                legend.title = element_blank())
+)
+
+#### DAPC separated by feature ####
+dapc_plot <- function(x,model_dnam,names=NULL) {
+  #x <- meth_beta$gene
+  x <- as.matrix(x[,2:ncol(x)])
+  x[is.na(x)] <- 0
+  class(x) <- "numeric"
+  symbC_dnam <- x[,model_dnam$X1st.Treatment == "c"]
+  symbC_meta_dnam <- model_dnam[model_dnam$X1st.Treatment == "c",]
+  dapc_treatment <- dapc(t(symbC_dnam),symbC_meta_dnam$X2nd.Treatment,n.pca=7,n.da=1)
+  symbC_meta_dnam$coord<- unlist(dapc_treatment$ind.coord[,1])
+  ## Mapping D.Symb
+  symbD_dnam <- x[,model_dnam$X1st.Treatment == "b"]
+  symbD_meta_dnam <- model_dnam[model_dnam$X1st.Treatment == "b",]
+  predict_values <- predict.dapc(dapc_treatment,t(symbD_dnam))
+  symbD_meta_dnam$coord <-unlist(predict_values$ind.scores[,1])
+  whole_meta_dnam<- rbind(symbC_meta_dnam,symbD_meta_dnam)
+  whole_meta_dnam$coord_transform <- log(whole_meta_dnam$coord+abs(min(whole_meta_dnam$coord))+1)
+  
+  output <- ggplot(whole_meta_dnam,aes(x=coord,fill=TreatComb)) + 
+            geom_density(adjust=2) + xlim(-8,8)  +
+            scale_fill_manual(values = c(col_perm[3], alpha(col_perm[4], alpha=0.4),col_perm[1], 
+                                         alpha(col_perm[2], alpha=0.4)),   
+                                labels=c('SymD_C','SymD_H','SymC_C','SymC_H')) +
+            scale_y_continuous(breaks = c(0.1,0.3,0.7,1),limits = c(0,1),trans = "sqrt") + 
+            theme_cowplot() +
+            labs(x="Coordinate",
+                 y="Density (sqrt)",
+                 title = names[i]) +
+            theme(plot.title = element_text(hjust = 0.5),
+                  legend.title = element_blank()) 
+  return(output)
+}
+
+dapc_plots <- list()
+plot_titles <- c("Exons","Gene Body","Introns","Intergenic","Repeat")
+for(i in 1:length(meth_beta)){
+  dapc_plots[[i]] <- dapc_plot(meth_beta[[i]],meta_final,plot_titles)
+}
+legend_dapc <- get_legend(
+  # create some space to the left of the legend
+  dapc_plots[[1]] + theme(legend.box.margin = margin(0, 0, 0, 12),
+                 legend.title = element_blank())
+)
+
+#### Supplemental Figure ####
+
+### Genome wide DNA methlyation patterns with PCA and DAPC
+pca_col <- plot_grid(plotlist = pca_plots[c(1,3,2,4,5)],ncol=1,labels=c("A","C","E","G","I"))
+dapc_col <- plot_grid(dapc_plots[[1]]+ theme(legend.position="none"),
+                      dapc_plots[[3]]+ theme(legend.position="none"),
+                      dapc_plots[[2]]+ theme(legend.position="none"),
+                      dapc_plots[[4]]+ theme(legend.position="none"),
+                      dapc_plots[[5]]+ theme(legend.position="none"),
+                      ncol=1,labels=c("B","D","F","H","J"))
+final_gw_supp <- plot_grid(pca_col,legend,dapc_col,legend_dapc,rel_widths = c(3,1,3,1,3,1),ncol=4)
+final_gw_supp
+
+ggsave(final_gw_supp,filename="../output/suppl/supp_GW_DNAm.png",width = 12, height = 12)
+```
+

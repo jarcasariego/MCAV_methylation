@@ -1,0 +1,79 @@
+#!/bin/bash
+
+#bowtie2_dir="/home/applications/bowtie2/2.1.0/bin/"
+
+#samtools_dir="/home/applications/samtools/0.1.19/bin/"
+
+trimmed_files="/scratch/jrodr979/Mcavernosa_methylome/Trimmed_sequences_JW/"
+
+genome="/scratch/jrodr979/Mcavernosa_methylome/2020-08-17-Bismark-1.2--un/Bismark_Inputs"
+
+
+# Alignment
+
+find ${trimmed_files}/19185FL-*R1*.fq.gz | xargs basename -s _R1_001_val_1.fq.gz | xargs -I{} bismark \
+--path_to_bowtie ${bowtie2_dir} \
+--samtools_path ${samtools_dir} \
+--non_directional \
+-p 8 \
+-score_min L,0,-1.2 \
+--un \
+--multicore ${SLURM_CPUS_ON_NODE} \
+--genome ${genome} \
+-1 ${trimmed_files}/{}_R1_001_val_1.fq.gz \
+-2 ${trimmed_files}/{}_R2_001_val_2.fq.gz \
+
+
+#Deduplication
+
+deduplicate_bismark \
+--samtools_path ${samtools_dir} \
+-p \
+--bam \
+19185FL-*_R1_001_val_1_bismark_bt2_pe.bam \
+
+
+#Sorting for Downstream Applications
+
+find *deduplicated.bam \
+| xargs basename -s _R1_001_val_1_bismark_bt2_pe.deduplicated.bam | xargs -I{} ${samtools_dir}/samtools \
+sort {}_R1_001_val_1_bismark_bt2_pe.deduplicated.bam \
+-o {}_dedup.sorted.bam
+
+
+
+#Indexing for Downstream Applications
+
+find *dedup.sorted.bam \
+| xargs basename -s _dedup.sorted.bam | xargs -I{} ${samtools_dir}/samtools \
+index {}_dedup.sorted.bam
+
+
+
+#Methylation Extraction
+
+bismark_methylation_extractor \
+--samtools_path ${samtools_dir} \
+-p \
+--bedGraph \
+--counts \
+--scaffolds \
+--multicore ${SLURM_CPUS_ON_NODE} \
+*deduplicated.bam
+
+
+
+#HTML Processing Report
+
+bismark2report
+
+
+#Summary Report
+
+bismark2summary
+
+
+
+
+
+

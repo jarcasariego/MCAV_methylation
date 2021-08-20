@@ -1,0 +1,35 @@
+#!/bin/bash
+
+## RNAseq raw reads were obtained from NCBI: BioProject accession PRJNA610282; 
+## SRA accession SRP251653.
+
+##########################################################
+
+fastq_files="/scratch/jeirinlo/jrodr979/UM_project/2021-02-28-RNA_seq_alignment"
+genome="/scratch/jeirinlo/jrodr979/UM_project/2021-02-28-RNA_seq_alignment/genome"
+
+###Build genome index
+
+hisat2-build -p 10 ${genome}/Mcavernosa_July2018.fasta ${genome}/hisat2_index/MCAV_genome
+
+###Run Alignment
+find ${fastq_files}/*.fastq | xargs basename -s _raw.fastq | xargs -I{} \
+hisat2 \
+-p 10 \
+-x ${genome}/hisat2_index/MCAV_genome \
+-U ${fastq_files}/{}_raw.fastq \
+-S ${fastq_files}/bam_files/{}.sam
+
+###Convert sam to bam
+
+find ${fastq_files}/bam_files/*.sam | xargs basename -s	.sam | xargs -I{} \
+samtools view -b ${fastq_files}/bam_files/{}.sam > ${fastq_files}/bam_files/{}.bam
+
+### Calculate per base depth
+
+find ${fastq_files}/bam_files/*.bam | xargs basename -s .bam | xargs -I{} \
+samtools depth ${fastq_files}/bam_files/{}.bam > ${fastq_files}/depth.tsv_files/{}_depth.tsv
+
+
+
+

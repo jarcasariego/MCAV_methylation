@@ -1,0 +1,1502 @@
+---
+title: "DMG_Analysis"
+author: "Javier Rodriguez Casariego"
+date: "10/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r eval=FALSE}
+library(plotrix) 
+library(ggplot2)
+library(gridExtra)
+library(pheatmap)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(topGO)
+library(goseq) #BiocManager:: install('goseq')
+library(genefilter)
+library(gplots)
+library(cowplot)
+library(lsmeans) #install.packages('lsmeans')
+library(ontologyIndex) #BiocManager:: install('ontologyIndex')
+library(ontologySimilarity) #BiocManager:: install('ontologySimilarity')
+library(data.table)
+library(RColorBrewer)
+library(colorRamps)
+library(GSEABase)
+library(doParallel)
+library(kableExtra)
+library(limma)     # BiocManager::install('limma')
+library(stringr)
+library(readxl)
+library(RColorBrewer)
+library(KOGMWU)  # install.packages("KOGMWU")
+library(ggpubr)
+source("../analyses/gomwu/gomwu.functions.R")
+```
+
+
+##############################################Load filtered methylation counts##################################
+```{r}
+
+meth.data <- list.files(path = "../analyses/Gene_Methylation/bed/", pattern = ".bed$", full.names=TRUE) %>%
+  set_names(.) %>% 
+  map_dfr(read.csv,.id="Sample.ID", header=FALSE, sep="\t", na.string="NA", stringsAsFactors = FALSE) %>% 
+  dplyr::select(-c(V3,V7:V14)) %>%
+  group_by(Sample.ID)
+colnames(meth.data) <- c("Sample.ID", "scaffold", "position","per.meth","meth","unmeth","gene")
+meth.data$gene <- gsub(";.*","",meth.data$gene) #remove extra characters
+meth.data$gene <- gsub("ID=","",meth.data$gene) #remove extra characters
+meth.data$Sample.ID <- gsub("../analyses/Gene_Methylation/bed/","",meth.data$Sample.ID) #remove extra characters
+meth.data$Sample.ID <- gsub("_.*","",meth.data$Sample.ID) #remove extra characters 
+MD.All <- merge(meth.data, sample.info, by="Sample.ID")
+MD.All <- MD.All %>%
+  mutate(sym = recode(trt1, b = "D", c = "C"),
+         treatment = paste(sym, trt2, sep = ""))
+
+```
+
+
+#GO identification for background set
+```{r}
+#generate list of all genes identified and background list for GO enrichment analysis
+MD.ALL.Genes <- unique(MD.All$gene)
+MD.ALL.Genes <- sort(MD.ALL.Genes)
+write.csv(MD.ALL.Genes, file = "../output/MD.ALL.Genes_For_GO_Background.csv")
+```
+
+# Testing for Differentially Methylated Genes
+```{r}
+# Comparison of samples between symb, heat stress and the interaction
+# Binomial GLM to test for differentially methylated genes
+sub_meth_table  <- MD.All
+sub_meth_table$group <- paste0(sub_meth_table$Sample.ID, sub_meth_table$gene)
+#filter for genes with >3 methylated positions
+min.filt <- count(sub_meth_table, vars = c( group))
+newdata <- min.filt[ which(min.filt$n > 2), ]
+sub_meth_table <- sub_meth_table[sub_meth_table$group %in% newdata$vars,]
+
+# create data frame to stored results
+results <- data.frame()
+gs <- unique(sub_meth_table$gene)
+#first subset the unique dataframes and second run the GLMs
+for(i in 1:length(gs)){
+  
+  #subset the dataframe gene by gene
+  sub_meth_table1 <- subset(sub_meth_table, gene ==gs[i])
+  
+  # fit glm position model
+  fit <- glm(matrix(c(meth, unmeth), ncol=2) ~ sym*trt2, 
+             data=sub_meth_table1, family=binomial)
+  a <- anova(fit, test="Chisq")
+  
+  # capture summary stats to data frame
+  df <- data.frame(gene = sub_meth_table1[1,7],
+                   pval.symb = a$`Pr(>Chi)`[2],
+                   pval.trt2 = a$`Pr(>Chi)`[3],
+                   pval.symb_trt2 = a$`Pr(>Chi)`[4],
+                   stringsAsFactors = F)
+  
+  # bind rows of temporary data frame to the results data frame
+  results <- rbind(results, df)
+  
+}
+
+results[is.na(results)] <- 0
+results$adj.pval.sym <- p.adjust(results$pval.symb, method='BH')
+results$adj.pval.trt2 <- p.adjust(results$pval.trt2, method='BH')
+results$adj.pval.sym_trt2 <- p.adjust(results$pval.symb_trt2, method='BH')
+
+sig_genes <-results
+sym_sig_genes <- sig_genes[, c(1,5)]
+trt_sig_genes <- sig_genes[, c(1,6)]
+inter_sig_genes <- sig_genes[, c(1,7)]
+  
+sym_sig_genes <- sym_sig_genes[order(sym_sig_genes$adj.pval.sym),]
+sym_sig_genes <- sym_sig_genes[which(sym_sig_genes$adj.pval.sym <0.05), ]
+
+trt_sig_genes <- trt_sig_genes[order(trt_sig_genes$adj.pval.trt2),]
+trt_sig_genes <- trt_sig_genes[which(trt_sig_genes$adj.pval.trt2 <0.05), ]
+
+inter_sig_genes <- inter_sig_genes[order(inter_sig_genes$adj.pval.sym_trt2),]
+inter_sig_genes <- inter_sig_genes[which(inter_sig_genes$adj.pval.sym_trt2 <0.05), ]
+
+sub_meth_table$per.meth <- (sub_meth_table$meth/(sub_meth_table$meth+sub_meth_table$unmeth))*100 #calculate percent methylation
+
+# Annotation of DMG between symbionts
+sym_DMG_annot <- merge(sym_sig_genes , Annot, by="gene", all.x=TRUE)
+sym_DMG_annot <- sym_DMG_annot[order(sym_DMG_annot$adj.pval.sym),]
+sym_DMG_annot <- sym_DMG_annot[!duplicated(sym_DMG_annot$gene),]
+write.table(sym_DMG_annot, '../output/Table_S1_Sym_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between heat treatments
+trt_DMG_annot <- merge(trt_sig_genes , Annot, by="gene", all.x=TRUE)
+trt_DMG_annot <- trt_DMG_annot[order(trt_DMG_annot$adj.pval.trt2),]
+trt_DMG_annot <- trt_DMG_annot[!duplicated(trt_DMG_annot$gene),]
+write.table(trt_DMG_annot, '../output/Table_S1_heat_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between interaction
+inter_DMG_annot <- merge(inter_sig_genes , Annot, by="gene", all.x=TRUE)
+inter_DMG_annot <- inter_DMG_annot[order(inter_DMG_annot$adj.pval.sym_trt2),]
+inter_DMG_annot <- inter_DMG_annot[!duplicated(inter_DMG_annot$gene),]
+write.table(inter_DMG_annot, '../output/Table_S1_SymXtrt2_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+####################################
+#### 1 v 1 Comparison of groups ####
+MD_Ctrol <- MD.All[which(MD.All$trt2 == "c"),]
+MD_Heated <- MD.All[which(MD.All$trt2 == "h"),]
+MD_SymbC <- MD.All[which(MD.All$sym == "C"),]
+MD_SymbD <- MD.All[which(MD.All$sym == "D"),]
+
+#### CC_vs_DC
+# Binomial GLM to test for differentially methylated genes
+sub_meth_table_Ctrol  <- MD_Ctrol
+sub_meth_table_Ctrol$group <- paste0(sub_meth_table_Ctrol$Sample.ID, sub_meth_table_Ctrol$gene)
+#filter for genes with >3 methylated positions
+min.filt_Ctrol <- count(sub_meth_table_Ctrol, vars = c( group))
+newdata_Ctrol <- min.filt_Ctrol[ which(min.filt_Ctrol$n > 2), ]
+sub_meth_table_Ctrol <- sub_meth_table_Ctrol[sub_meth_table_Ctrol$group %in% newdata_Ctrol$vars,]
+
+# create data frame to stored results
+results <- data.frame()
+gs <- unique(sub_meth_table_Ctrol$gene)
+#first subset the unique dataframes and second run the GLMs
+for(i in 1:length(gs)){
+  
+  #subset the dataframe gene by gene
+  sub_meth_table1 <- subset(sub_meth_table_Ctrol, gene ==gs[i])
+  
+  # fit glm position model
+  fit <- glm(matrix(c(meth, unmeth), ncol=2) ~ sym, 
+             data=sub_meth_table1, family=binomial)
+  a <- anova(fit, test="Chisq")
+  
+  # capture summary stats to data frame
+  df <- data.frame(gene = sub_meth_table1[1,7],
+                   pval = a$`Pr(>Chi)`[2],
+                   stringsAsFactors = F)
+  
+  # bind rows of temporary data frame to the results data frame
+  results <- rbind(results, df)
+  
+}
+
+results[is.na(results)] <- 0
+results$adj.pval <- p.adjust(results$pval, method='BH')
+
+Ctrol_sig_genes <-results [,c(1,3)]
+Ctrol_sig_genes <- Ctrol_sig_genes[order(Ctrol_sig_genes$adj.pval),]
+Ctrol_sig_genes <- Ctrol_sig_genes[which(Ctrol_sig_genes$adj.pval <0.05), ]
+Ctrol_sig_gene_list <- as.vector(Ctrol_sig_genes$gene)
+
+sub_meth_table_Ctrol$per.meth <- (sub_meth_table_Ctrol$meth/(sub_meth_table_Ctrol$meth+sub_meth_table_Ctrol$unmeth))*100 #calculate percent methylation
+
+#### CH_vs_DH
+# Binomial GLM to test for differentially methylated genes
+sub_meth_table_Heated  <- MD_Heated
+sub_meth_table_Heated$group <- paste0(sub_meth_table_Heated$Sample.ID, sub_meth_table_Heated$gene)
+#filter for genes with >3 methylated positions
+min.filt_Heated <- count(sub_meth_table_Heated, vars = c( group))
+newdata_Heated <- min.filt_Heated[ which(min.filt_Heated$n > 2), ]
+sub_meth_table_Heated <- sub_meth_table_Heated[sub_meth_table_Heated$group %in% newdata_Heated$vars,]
+
+# create data frame to stored results
+results <- data.frame()
+gs <- unique(sub_meth_table_Heated$gene)
+#first subset the unique dataframes and second run the GLMs
+for(i in 1:length(gs)){
+  
+  #subset the dataframe gene by gene
+  sub_meth_table1 <- subset(sub_meth_table_Heated, gene ==gs[i])
+  
+  # fit glm position model
+  fit <- glm(matrix(c(meth, unmeth), ncol=2) ~ sym, 
+             data=sub_meth_table1, family=binomial)
+  a <- anova(fit, test="Chisq")
+  
+  # capture summary stats to data frame
+  df <- data.frame(gene = sub_meth_table1[1,7],
+                   pval = a$`Pr(>Chi)`[2],
+                   stringsAsFactors = F)
+  
+  # bind rows of temporary data frame to the results data frame
+  results <- rbind(results, df)
+  
+}
+
+results[is.na(results)] <- 0
+results$adj.pval <- p.adjust(results$pval, method='BH')
+
+Heated_sig_genes <-results [,c(1,3)]
+Heated_sig_genes <- Heated_sig_genes[order(Heated_sig_genes$adj.pval),]
+Heated_sig_genes <- Heated_sig_genes[which(Heated_sig_genes$adj.pval <0.05), ]
+Heated_sig_gene_list <- as.vector(Heated_sig_genes$gene)
+
+sub_meth_table_Heated$per.meth <-(sub_meth_table_Heated$meth/(sub_meth_table_Heated$meth+sub_meth_table_Heated$unmeth))*100 #calculate percent methylation
+
+#### CC_vs_CH
+# Binomial GLM to test for differentially methylated genes
+sub_meth_table_SymbC  <- MD_SymbC
+sub_meth_table_SymbC$group <- paste0(sub_meth_table_SymbC$Sample.ID, sub_meth_table_SymbC$gene)
+#filter for genes with >3 methylated positions
+min.filt_SymbC <- count(sub_meth_table_SymbC, vars = c( group))
+newdata_SymbC <- min.filt_SymbC[ which(min.filt_SymbC$n > 2), ]
+sub_meth_table_SymbC <- sub_meth_table_SymbC[sub_meth_table_SymbC$group %in% newdata_SymbC$vars,]
+
+# create data frame to stored results
+results <- data.frame()
+gs <- unique(sub_meth_table_SymbC$gene)
+#first subset the unique dataframes and second run the GLMs
+for(i in 1:length(gs)){
+  
+  #subset the dataframe gene by gene
+  sub_meth_table1 <- subset(sub_meth_table_SymbC, gene ==gs[i])
+  
+  # fit glm position model
+  fit <- glm(matrix(c(meth, unmeth), ncol=2) ~ trt2, 
+             data=sub_meth_table1, family=binomial)
+  a <- anova(fit, test="Chisq")
+  
+  # capture summary stats to data frame
+  df <- data.frame(gene = sub_meth_table1[1,7],
+                   pval = a$`Pr(>Chi)`[2],
+                   stringsAsFactors = F)
+  
+  # bind rows of temporary data frame to the results data frame
+  results <- rbind(results, df)
+  
+}
+
+results[is.na(results)] <- 0
+results$adj.pval <- p.adjust(results$pval, method='BH')
+
+SymbC_sig_genes <-results [,c(1,3)]
+SymbC_sig_genes <- SymbC_sig_genes[order(SymbC_sig_genes$adj.pval),]
+SymbC_sig_genes <- SymbC_sig_genes[which(SymbC_sig_genes$adj.pval <0.05), ]
+SymbC_sig_gene_list <- as.vector(SymbC_sig_genes$gene)
+
+sub_meth_table_SymbC$per.meth <- (sub_meth_table_SymbC$meth/(sub_meth_table_SymbC$meth+sub_meth_table_SymbC$unmeth))*100 #calculate percent methylation
+
+#### DC_vs_DH
+# Binomial GLM to test for differentially methylated genes
+sub_meth_table_SymbD  <- MD_SymbD
+sub_meth_table_SymbD$group <- paste0(sub_meth_table_SymbD$Sample.ID, sub_meth_table_SymbD$gene)
+#filter for genes with >3 methylated positions
+min.filt_SymbD <- count(sub_meth_table_SymbD, vars = c( group))
+newdata_SymbD <- min.filt_SymbD[ which(min.filt_SymbD$n > 2), ]
+sub_meth_table_SymbD <- sub_meth_table_SymbD[sub_meth_table_SymbD$group %in% newdata_SymbD$vars,]
+
+# create data frame to stored results
+results <- data.frame()
+gs <- unique(sub_meth_table_SymbD$gene)
+#first subset the unique dataframes and second run the GLMs
+for(i in 1:length(gs)){
+  
+  #subset the dataframe gene by gene
+  sub_meth_table1 <- subset(sub_meth_table_SymbD, gene ==gs[i])
+  
+  # fit glm position model
+  fit <- glm(matrix(c(meth, unmeth), ncol=2) ~ trt2, 
+             data=sub_meth_table1, family=binomial)
+  a <- anova(fit, test="Chisq")
+  
+  # capture summary stats to data frame
+  df <- data.frame(gene = sub_meth_table1[1,7],
+                   pval = a$`Pr(>Chi)`[2],
+                   stringsAsFactors = F)
+  
+  # bind rows of temporary data frame to the results data frame
+  results <- rbind(results, df)
+  
+}
+
+results[is.na(results)] <- 0
+results$adj.pval <- p.adjust(results$pval, method='BH')
+
+SymbD_sig_genes <-results [,c(1,3)]
+SymbD_sig_genes <- SymbD_sig_genes[order(SymbD_sig_genes$adj.pval),]
+SymbD_sig_genes <- SymbD_sig_genes[which(SymbD_sig_genes$adj.pval <0.05), ]
+SymbD_sig_gene_list <- as.vector(SymbD_sig_genes$gene)
+
+sub_meth_table_SymbD$per.meth <- (sub_meth_table_SymbD$meth/(sub_meth_table_SymbD$meth+sub_meth_table_SymbD$unmeth))*100 #calculate percent methylation
+
+# Annotation of DMG between symbionts
+sym_DMG_annot <- merge(sym_sig_genes , Annot, by="gene", all.x=TRUE)
+sym_DMG_annot <- sym_DMG_annot[order(sym_DMG_annot$adj.pval.sym),]
+sym_DMG_annot <- sym_DMG_annot[!duplicated(sym_DMG_annot$gene),]
+write.table(sym_DMG_annot, '../output/Sym_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between heat treatments
+trt_DMG_annot <- merge(trt_sig_genes , Annot, by="gene", all.x=TRUE)
+trt_DMG_annot <- trt_DMG_annot[order(trt_DMG_annot$adj.pval.trt2),]
+trt_DMG_annot <- trt_DMG_annot[!duplicated(trt_DMG_annot$gene),]
+write.table(trt_DMG_annot, '../output/heat_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between interaction
+inter_DMG_annot <- merge(inter_sig_genes , Annot, by="gene", all.x=TRUE)
+inter_DMG_annot <- inter_DMG_annot[order(inter_DMG_annot$adj.pval.sym_trt2),]
+inter_DMG_annot <- inter_DMG_annot[!duplicated(inter_DMG_annot$gene),]
+write.table(inter_DMG_annot, '../output/SymXtrt2_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+gene_list_symb <- read.table("../output/Table_S1_Sym_DMG_gene_list.txt")
+gene_list_symb <- as.vector(gene_list_symb$V1)
+gene_list_temp <- read.table("../output/Table_S1_heat_DMG_gene_list.txt", sep = "\t")
+gene_list_temp <- as.vector(gene_list_temp$V1)
+gene_list_Inter <- read.table("../output/Table_S1_SymXtrt2_DMG_gene_list.txt", sep = "\t")  
+gene_list_Inter <- as.vector(gene_list_Inter$V1)
+
+# find shared genes
+shared_DMG_Symb_temp <- intersect(gene_list_symb, gene_list_temp)
+shared_DMG_Symb_Inter <- intersect(gene_list_symb, gene_list_Inter)
+shared_DMG_Inter_temp <- intersect(gene_list_Inter, gene_list_temp)
+shared_DMG_all <- intersect(gene_list_symb, gene_list_temp) %>% 
+  intersect(., gene_list_Inter)
+
+#Create Venn Diagram of DMG_general model
+library(VennDiagram)
+myCol <- brewer.pal(3, "Pastel1")
+venn.diagram(
+        x = list(gene_list_symb,gene_list_temp,gene_list_Inter),
+        category.names = c("Symb" , "Temp " , "Symb:Temp"),
+        filename = '../output/other/DMG_GM_venn_diagramm.png',
+        output=TRUE,
+        
+        # Output features
+        imagetype="png" ,
+        height = 480 , 
+        width = 480 , 
+        resolution = 300,
+        compression = "lzw",
+        
+        # Circles
+        lwd = 2,
+        lty = 'blank',
+        fill = myCol,
+        
+        # Numbers
+        cex = .6,
+        fontface = "bold",
+        fontfamily = "sans",
+        
+        # Set names
+        cat.cex = 0.6,
+        cat.fontface = "bold",
+        cat.default.pos = "outer",
+        cat.pos = c(-27, 27, 135),
+        cat.dist = c(0.055, 0.055, 0.085),
+        cat.fontfamily = "sans",
+        rotation = 1
+)
+#Create Venn Diagram of DMG_general model
+
+myCol <- brewer.pal(4, "Pastel2")
+venn.diagram(
+        x = list(Ctrol_sig_gene_list,SymbC_sig_gene_list,SymbD_sig_gene_list,Heated_sig_gene_list),
+        category.names = c("Dc.vs.Cc","Ch.vs.Cc","Dh.vs.Dc","Dh.vs.Ch"),
+        filename = '../output/other/DMG_IndComp_venn_diagramm.png',
+        output=TRUE,
+        
+        # Output features
+        imagetype="png" ,
+        height = 600 , 
+        width = 600, 
+        resolution = 300,
+        compression = "lzw",
+        
+        # Circles
+        lwd = 2,
+        lty = 'blank',
+        fill = myCol,
+        
+        # Numbers
+        cex = .6,
+        fontface = "bold",
+        fontfamily = "sans",
+        
+        # Set names
+        cat.cex = 0.6,
+        cat.fontface = "italic",
+        cat.default.pos = "outer",
+        cat.fontfamily = "sans", 
+        
+        margin = 0.1
+    
+)
+
+# Annotation of DMG between Cc_Dc
+Ctrol_DMG_annot <- merge(Ctrol_sig_genes , Annot, by="gene", all.x=TRUE)
+Ctrol_DMG_annot <- Ctrol_DMG_annot[order(Ctrol_DMG_annot$adj.pval),]
+Ctrol_DMG_annot <- Ctrol_DMG_annot[!duplicated(Ctrol_DMG_annot$gene),]
+write.table(Ctrol_DMG_annot, '../output/Cc_DC_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between Ch_Dh
+Heated_DMG_annot <- merge(Heated_sig_genes , Annot, by="gene", all.x=TRUE)
+Heated_DMG_annot <- Heated_DMG_annot[order(Heated_DMG_annot$adj.pval),]
+Heated_DMG_annot <- Heated_DMG_annot[!duplicated(Heated_DMG_annot$gene),]
+write.table(Heated_DMG_annot, '../output/Ch_Dh_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between Cc_Ch
+SymbC_DMG_annot <- merge(SymbC_sig_genes , Annot, by="gene", all.x=TRUE)
+SymbC_DMG_annot <- SymbC_DMG_annot[order(SymbC_DMG_annot$adj.pval),]
+SymbC_DMG_annot <- SymbC_DMG_annot[!duplicated(SymbC_DMG_annot$gene),]
+write.table(SymbC_DMG_annot, '../output/Cc_Ch_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+# Annotation of DMG between Dc_Dh
+SymbD_DMG_annot <- merge(SymbD_sig_genes , Annot, by="gene", all.x=TRUE)
+SymbD_DMG_annot <- SymbD_DMG_annot[order(SymbD_DMG_annot$adj.pval),]
+SymbD_DMG_annot <- SymbD_DMG_annot[!duplicated(SymbD_DMG_annot$gene),]
+write.table(SymbD_DMG_annot, '../output/Dc_Dh_DMG_annot.tsv', sep='\t', row.names=FALSE)
+
+all_DMG_annot <- rbind(Ctrol_DMG_annot,SymbC_DMG_annot,Heated_DMG_annot,SymbD_DMG_annot)
+all_DMG_annot <- all_DMG_annot[!duplicated(all_DMG_annot$gene),]
+write.table(all_DMG_annot, '../output/all_DMG_annot.tsv', sep='\t', row.names=FALSE)
+```
+
+
+```{r}
+##### Heatmap of DMGs  #####
+meth_table.means <- aggregate(per.meth ~ treatment*gene, data=MD.All, FUN=mean)
+meth_table.means_s <- meth_table.means[meth_table.means$gene %in% sym_sig_genes$gene,]
+meth_table.means_t <- meth_table.means[meth_table.means$gene %in% trt_sig_genes$gene,]
+meth_table.means_i <- meth_table.means[meth_table.means$gene %in% inter_sig_genes$gene,]
+
+meth_table.means <- rbind(meth_table.means_t, meth_table.means_s)
+meth_table.means <- rbind(meth_table.means, meth_table.means_i)
+meth_table.means$tempID <- paste(meth_table.means$treatment, meth_table.means$gene, meth_table.means$per.meth, sep = ":")
+meth_table.means <- meth_table.means[match(unique(meth_table.means$tempID), meth_table.means$tempID),]
+meth_table.means <- meth_table.means[,-4]
+
+meth_table.means_Ctrol <- aggregate(per.meth ~ treatment*gene, data=MD_Ctrol, FUN=mean)
+meth_table.means_Heated <- aggregate(per.meth ~ treatment*gene, data=MD_Heated, FUN=mean)
+meth_table.means_SymbC <- aggregate(per.meth ~ treatment*gene, data=MD_SymbC, FUN=mean)
+meth_table.means_SymbD <- aggregate(per.meth ~ treatment*gene, data=MD_SymbD, FUN=mean)
+
+meth_table.means_Ctrol <- meth_table.means_Ctrol[meth_table.means_Ctrol$gene %in% Ctrol_sig_genes$gene,]
+meth_table.means_Heated <- meth_table.means_Heated[meth_table.means_Heated$gene %in% Heated_sig_genes$gene,]
+meth_table.means_SymbC <- meth_table.means_SymbC[meth_table.means_SymbC$gene %in% SymbC_sig_genes$gene,]
+meth_table.means_SymbD <- meth_table.means_SymbD[meth_table.means_SymbD$gene %in% SymbD_sig_genes$gene,]
+
+sig_meth_mean_Ctrol <- meth_table.means_Ctrol %>% pivot_wider(names_from = c(treatment), values_from = per.meth)
+sig_meth_mean_Ctrol.mat <- as.matrix(sig_meth_mean_Ctrol[,-1])
+
+meth_diff_Ctrol <- sig_meth_mean_Ctrol
+meth_diff_Ctrol$meth_diff <- sig_meth_mean_Ctrol$Cc - sig_meth_mean_Ctrol$Dc
+meth_diff_Ctrol <- meth_diff_Ctrol[, c(1,4)]
+
+sig_meth_mean_Heated <- meth_table.means_Heated %>% pivot_wider(names_from = c(treatment), values_from = per.meth)
+sig_meth_mean_Heated.mat <- as.matrix(sig_meth_mean_Heated[,-1])
+
+meth_diff_Heated <- sig_meth_mean_Heated
+meth_diff_Heated$meth_diff <- sig_meth_mean_Heated$Ch - sig_meth_mean_Heated$Dh
+meth_diff_Heated <- meth_diff_Heated[, c(1,4)]
+
+sig_meth_mean_SymbC <- meth_table.means_SymbC %>% pivot_wider(names_from = c(treatment), values_from = per.meth)
+sig_meth_mean_SymbC.mat <- as.matrix(sig_meth_mean_SymbC[,-1])
+
+meth_diff_SymbC <- sig_meth_mean_SymbC
+meth_diff_SymbC$meth_diff <- sig_meth_mean_SymbC$Cc - sig_meth_mean_SymbC$Ch
+meth_diff_SymbC <- meth_diff_SymbC[, c(1,4)]
+
+sig_meth_mean_SymbD <- meth_table.means_SymbD %>% pivot_wider(names_from = c(treatment), values_from = per.meth)
+sig_meth_mean_SymbD.mat <- as.matrix(sig_meth_mean_SymbD[,-1])
+
+meth_diff_SymbD <- sig_meth_mean_SymbD
+meth_diff_SymbD$meth_diff <- sig_meth_mean_SymbD$Dc - sig_meth_mean_SymbD$Dh
+meth_diff_SymbD <- meth_diff_SymbD[, c(1,4)]
+
+all_ind_comp <- merge(meth_diff_Ctrol, meth_diff_SymbC, by = "gene")
+all_ind_comp <- merge(all_ind_comp, meth_diff_SymbD, by = "gene")
+all_ind_comp.mat <- as.matrix(all_ind_comp[,-1], rm.na = TRUE)
+all_ind_comp.mat[is.na(all_ind_comp.mat)] <- 0
+colnames(all_ind_comp.mat) <- c("Cc.vs.Dc", "Cc.vs.Ch", "Dc.vs.Dh")
+
+#Separate by genet
+
+G1_meth_table.means_Ctrol <- MD_Ctrol[which(MD_Ctrol$colony == 20),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G1_meth_table.means_Heated <- MD_Heated[which(MD_Heated$colony == 20),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G1_meth_table.means_SymbC <- MD_SymbC[which(MD_SymbC$colony == 20),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G1_meth_table.means_SymbD <- MD_SymbD[which(MD_SymbD$colony == 20),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+
+G1_meth_table.means_Ctrol <- G1_meth_table.means_Ctrol[G1_meth_table.means_Ctrol$gene %in% Ctrol_sig_genes$gene,]
+G1_meth_table.means_Heated <- G1_meth_table.means_Heated[G1_meth_table.means_Heated$gene %in% Heated_sig_genes$gene,]
+G1_meth_table.means_SymbC <- G1_meth_table.means_SymbC[G1_meth_table.means_SymbC$gene %in% SymbC_sig_genes$gene,]
+G1_meth_table.means_SymbD <- G1_meth_table.means_SymbD[G1_meth_table.means_SymbD$gene %in% SymbD_sig_genes$gene,]
+
+G2_meth_table.means_Ctrol <- MD_Ctrol[which(MD_Ctrol$colony == 22),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G2_meth_table.means_Heated <- MD_Heated[which(MD_Heated$colony == 22),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G2_meth_table.means_SymbC <- MD_SymbC[which(MD_SymbC$colony == 22),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G2_meth_table.means_SymbD <- MD_SymbD[which(MD_SymbD$colony == 22),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+
+G2_meth_table.means_Ctrol <- G2_meth_table.means_Ctrol[G2_meth_table.means_Ctrol$gene %in% Ctrol_sig_genes$gene,]
+G2_meth_table.means_Heated <- G2_meth_table.means_Heated[G2_meth_table.means_Heated$gene %in% Heated_sig_genes$gene,]
+G2_meth_table.means_SymbC <- G2_meth_table.means_SymbC[G2_meth_table.means_SymbC$gene %in% SymbC_sig_genes$gene,]
+G2_meth_table.means_SymbD <- G2_meth_table.means_SymbD[G2_meth_table.means_SymbD$gene %in% SymbD_sig_genes$gene,]
+
+G3_meth_table.means_Ctrol <- MD_Ctrol[which(MD_Ctrol$colony == 26),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G3_meth_table.means_Heated <- MD_Heated[which(MD_Heated$colony == 26),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G3_meth_table.means_SymbC <- MD_SymbC[which(MD_SymbC$colony == 26),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+G3_meth_table.means_SymbD <- MD_SymbD[which(MD_SymbD$colony == 26),] %>%
+  aggregate(per.meth ~ treatment*gene, data=., FUN=mean)
+
+G3_meth_table.means_Ctrol <- G3_meth_table.means_Ctrol[G3_meth_table.means_Ctrol$gene %in% Ctrol_sig_genes$gene,]
+G3_meth_table.means_Heated <- G3_meth_table.means_Heated[G3_meth_table.means_Heated$gene %in% Heated_sig_genes$gene,]
+G3_meth_table.means_SymbC <- G3_meth_table.means_SymbC[G3_meth_table.means_SymbC$gene %in% SymbC_sig_genes$gene,]
+G3_meth_table.means_SymbD <- G3_meth_table.means_SymbD[G3_meth_table.means_SymbD$gene %in% SymbD_sig_genes$gene,]
+
+jpeg("../output/all.genes.sig_DMG_comp_heatmap.jpg", width = 600, height = 1000)
+AllHM <- heatmap.2(all_ind_comp.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+
+colnames(sig_meth_mean_Ctrol.mat) <- c("SymbC_Control", "SymbD_Control")
+colnames(sig_meth_mean_Heated.mat) <- c("SymbC_Heated", "SymbD_Heated")
+colnames(sig_meth_mean_SymbC.mat) <- c("SymbC_Control", "SymbC_Heated")
+colnames(sig_meth_mean_SymbD.mat) <- c("SymbD_Control", "SymbD_Heated")
+
+#meth_table.means_1v1 <- rbind(meth_table.means_Ctrol, meth_table.means_SymbC)
+#meth_table.means_1v1 <- rbind(meth_table.means_1v1, meth_table.means_SymbD)
+#meth_table.means_1v1 <- rbind(meth_table.means_1v1, meth_table.means_Heated)
+#meth_table.means_1v1$tempID <- paste(meth_table.means_1v1$treatment, meth_table.means_1v1$gene, meth_table.means_1v1$per.meth, meth_table.means_1v1$comparison, sep = ":")
+#meth_table.means_1v1 <- meth_table.means_1v1[match(unique(meth_table.means_1v1$tempID), meth_table.means_1v1$tempID),]
+#meth_table.means_1v1 <- meth_table.means_1v1[,-5]
+
+# Plot All_general comp
+sig_meth_mean <- meth_table.means %>% pivot_wider(names_from = c(treatment), values_from = per.meth)
+sig_meth_mean.mat <- as.matrix(sig_meth_mean[,-1])
+colnames(sig_meth_mean.mat) <- c("SymbC_Control", "SymbC_Heated", "SymbD_Control", "SymbD_Heated")
+jpeg("../output/figures/all.sig_DMG_heatmap.jpg", width = 600, height = 1000)
+AllHM <- heatmap.2(sig_meth_mean.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+
+meth_table.means$treatment <- ordered(meth_table.means$treatment,
+                         levels = c("Cc", "Ch", "Dc", "Dh"))
+group_by(meth_table.means, treatment) %>%
+  summarise(
+    count = n(),
+    mean = mean(per.meth, na.rm = TRUE),
+    sd = sd(per.meth, na.rm = TRUE)
+  )
+
+library("ggpubr")
+ggboxplot(meth_table.means, x = "treatment", y = "per.meth", 
+          color = "treatment", palette = c("#00AFBB", "#E7B800", "#FC4E07","green"),
+          order = c("Cc", "Ch", "Dc","Dh"),
+          ylab = "Percent Methylation", xlab = "Treatment")
+ggline(meth_table.means, x = "treatment", y = "per.meth", 
+          add = c("mean_se", "jitter"),
+          order = c("Cc", "Ch", "Dc","Dh"),
+          ylab = "Percent Methylation", xlab = "Treatment")
+
+res.aov <- aov(per.meth ~ treatment, data = meth_table.means)
+# Summary of the analysis
+summary(res.aov)
+TukeyHSD(res.aov)
+
+pairwise.t.test(meth_table.means$per.meth, meth_table.means$treatment,
+                 p.adjust.method = "BH")
+
+
+#Plot individual comparisons
+jpeg("../output/other/Cc_DC.sig_DMG_heatmap.jpg", width = 600, height = 1000)
+HM <- heatmap.2(sig_meth_mean_Ctrol.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+
+jpeg("../output/other/Ch_Dh.sig_DMG_heatmap.jpg", width = 600, height = 1000)
+HM1 <- heatmap.2(sig_meth_mean_Heated.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+
+jpeg("../output/other/Cc_Ch.sig_DMG_heatmap.jpg", width = 600, height = 1000)
+HM2 <- heatmap.2(sig_meth_mean_SymbC.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+
+jpeg("../output/other/Dc_Dh.sig_DMG_heatmap.jpg", width = 600, height = 1000)
+HM2 <- heatmap.2(sig_meth_mean_SymbD.mat, margins = c(10,10), cexRow = 1.2, cexCol = 1, Colv=FALSE, dendrogram="row", labRow=FALSE, col = rev(RColorBrewer::brewer.pal(name = "RdYlBu", n = 10)), na.color = "black", density.info = "none", trace = "none", scale = "row", sepwidth=c(0.025,0.025), sepcolor="darkgray", keysize = 1)
+dev.off()
+```
+
+
+#### GO enrichment
+## Loading genomic and annotation
+```{r}
+#load sample information
+sample.info <- read.csv("../data/Treatment_metadata.csv", header=T, sep=",", na.string="NA", stringsAsFactors = F) #read in info
+sample.info <- sample.info[order(sample.info$Code), ]
+sample.info <- sample.info[-24, ] # exclude CH-26-2. Sample has some sequencing issues
+sample.info <- sample.info[, c(4,7:11)]
+colnames(sample.info) <- c("colony","trt1","trt2","TreatComb","Tank", "Sample.ID")
+samp <- sample.info$Sample.ID # set sample info
+#generate geneLoc file for downstream analyses 
+geneLoc <- read.csv("../data/Genome/Mcav.GFFannotation.gene.gff", header=F, sep="\t", na.string="NA", skip=3, stringsAsFactors = F) #read in data file
+colnames(geneLoc) <- c("chr","method","feature","start","end","score","strand","phase","gene_id")
+geneLoc$gene_id <- gsub(";.*","",geneLoc$gene_id) #remove extra characters
+geneLoc$gene_id <- gsub("ID=","",geneLoc$gene_id) #remove extra characters
+saveRDS(geneLoc, paste0("../analyses/Genomic_features/gene_GeneLoc.RData"))
+#load genes gff
+Genes <- read.csv("../data/Genome/Mcav.GFFannotation.gene.gff", header=F, sep="\t", na.string="NA", skip=3, stringsAsFactors = F) #read in data file
+Genes <- Genes[,c(1,4,5,9)] #select desired columns only
+colnames(Genes) <- c("scaffold", "start", "stop", "gene") #rename columns
+Genes$gene <- gsub(";.*","",Genes$gene) #remove extra characters
+Genes$gene <- gsub("ID=","",Genes$gene) #remove extra characters
+#Load annotation file
+Annot <- read.csv("../data/Genome/Mcavernosa_trinotate_annotation_report.xls.txt", header=TRUE, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)
+colnames(Annot)[1] <- "gene"
+Annot <- merge(Annot, Genes, by="gene")
+GO.data <- Annot[,c(1,13:14)] #select names and GOs
+
+GO.data_blast <- Annot[,c(1,13)] #select names and GOs
+GO.data_pfam <- Annot[,c(1,14)] #select names and GOs
+
+splitted_blast <- strsplit(as.character(GO.data_blast$gene_ontology_blast), "`") #split into multiple GO ids
+Gene.GO_blast.IDs <- data.frame(v1 = rep.int(GO.data_blast$gene, sapply(splitted_blast, length)), v2 = unlist(splitted_blast)) #list all genes with each of their GO terms in a single row 
+colnames(Gene.GO_blast.IDs) <- c("gene", "GO.IDs") #rename columns
+Gene.GO_blast.IDs$GO.IDs[which(Gene.GO_blast.IDs$GO.IDs == ".")] <- NA #replace NA with unknown
+Gene.GO_blast.IDs$GO.IDs <- as.character(Gene.GO_blast.IDs$GO.IDs)
+Gene.GO_blast.IDs$GO.IDs <- substr(Gene.GO_blast.IDs$GO.IDs, 1, 10)
+
+splitted_pfam <- strsplit(as.character(GO.data_pfam$gene_ontology_pfam), "`") #split into multiple GO ids
+Gene.GO_pfam.IDs <- data.frame(v1 = rep.int(GO.data_pfam$gene, sapply(splitted_pfam, length)), v2 = unlist(splitted_pfam)) #list all genes with each of their GO terms in a single row 
+colnames(Gene.GO_pfam.IDs) <- c("gene", "GO.IDs") #rename columns
+Gene.GO_pfam.IDs$GO.IDs[which(Gene.GO_pfam.IDs$GO.IDs == ".")] <- NA #replace NA with unknown
+Gene.GO_pfam.IDs$GO.IDs <- as.character(Gene.GO_pfam.IDs$GO.IDs)
+Gene.GO_pfam.IDs$GO.IDs <- substr(Gene.GO_pfam.IDs$GO.IDs, 1, 10)
+
+Gene.GO.IDs <-rbind(Gene.GO_blast.IDs, Gene.GO_pfam.IDs)
+Gene.GO.IDs <- Gene.GO.IDs[order(Gene.GO.IDs$gene),]
+
+Gene.GO.IDs$seq_value <- ave(Gene.GO.IDs$gene, Gene.GO.IDs$gene, FUN=seq_along)
+
+write.table(Gene.GO.IDs, "../data/Genome/Mcav_annotation_Gene.GO.IDs", sep = "\t", quote = F, row.names = F)
+
+Gene.GO.IDs.wide <- Gene.GO.IDs %>%
+  pivot_wider(names_from = seq_value, values_from = GO.IDs)
+
+Gene.GO.IDs.clean <- Gene.GO.IDs.wide %>%
+  unite(GO.IDs, 2:218, sep = ";", remove = TRUE, na.rm = T)
+
+gene.IDs <- unique(Gene.GO.IDs$gene)
+GO.IDs <-unique(Gene.GO.IDs$GO.IDs)
+```
+
+#Generate slim terms for GOs
+```{r}
+library(foreach)
+library(doParallel)
+
+fl <- system.file("extdata", "goslim_generic.obo", package="GSEABase")
+slim <- getOBOCollection(fl)
+
+#setup parallel backend to use many processors
+cores=detectCores()
+cl <- makeCluster(cores[1]-1) #not to overload your computer
+registerDoParallel(cl)
+
+gene_slims <- foreach(i=1:length(Gene.GO.IDs.clean$gene), .combine=rbind, .packages = c("GSEABase", "topGO")) %dopar% {
+    print(i)
+  if(!is.na(Gene.GO.IDs.clean$GO.IDs[i])){
+    GO_IDs <- unlist(strsplit(Gene.GO.IDs.clean$GO.IDs[i], ";"))
+    GO_collection <- GOCollection(GO_IDs)
+    slims_bp <- data.frame(goSlim(GO_collection, slim, "BP"))
+    slims_bp$gene <- Gene.GO.IDs.clean$gene[i]
+    slims_bp <- slims_bp[which(slims_bp$Count!=0),]
+  } 
+}
+#stop cluster
+stopCluster(cl)
+    
+gene_slims$Term <- gsub("nucleobase-containing compound cata...","nucleobase-containing compound catabolic process", gene_slims$Term)
+  
+gene_slims$Term <- gsub("generation of precursor metabolites...","generation of precursor metabolites and energy", gene_slims$Term)
+    
+gene_slims$Term <- gsub("cytoskeleton-dependent intracellula...","cytoskeleton-dependent intracellular transport", gene_slims$Term)
+    
+gene_slims$Term <- gsub("cellular geneein modification proce...","cellular geneein modification process", gene_slims$Term)
+    
+gene_slims$Term <- gsub("cellular nitrogen compound metaboli...","cellular nitrogen compound metabolic process", gene_slims$Term)
+    
+gene_slims$Term <- gsub("cellular nitrogen compound metaboli...","cellular nitrogen compound metabolic p", gene_slims$Term)
+    
+gene_slims$Term <- gsub("cellular amino acid metabolic proce...","cellular amino acid metabolic process", gene_slims$Term)
+    
+gene_slims$Term <- gsub("anatomical structure formation invo...","anatomical structure formation involved in morphogenesis", gene_slims$Term)
+
+gene_slims$Term <- gsub("protein modification proce...","protein modification process", gene_slims$Term)
+
+gene_slims$Term <- gsub("cell wall organization or biogenesi...","cell wall organization or biogenesis", gene_slims$Term)
+
+
+#reformat data frame from long to wide with slim terms separated by commas
+gene_slims_summry_bp <- gene_slims %>% dplyr::group_by(gene) %>% dplyr::summarise(GO_slim_BP = toString(Term)) 
+#convert commas to semi colons
+gene_slims_summry_bp$GO_slim_BP <- gsub(",",";",gene_slims_summry_bp$GO_slim_BP)
+
+#do the same for CC
+cores=detectCores()
+cl <- makeCluster(cores[1]-1) #not to overload your computer
+registerDoParallel(cl)
+
+
+gene_slims <- foreach(i=1:length(Gene.GO.IDs.clean$gene), .combine=rbind, .packages = c("GSEABase", "topGO")) %dopar% {
+    print(i)
+   if(!is.na(Gene.GO.IDs.clean$GO.IDs[i])){
+    GO_IDs <- unlist(strsplit(Gene.GO.IDs.clean$GO.IDs[i], ";"))
+    GO_collection <- GOCollection(GO_IDs)
+    slims_cc <- data.frame(goSlim(GO_collection, slim, "CC"))
+    slims_cc$gene <- Gene.GO.IDs.clean$gene[i]
+    slims_cc <- slims_cc[which(slims_cc$Count!=0),]
+  }
+}
+stopCluster(cl)
+
+#reformat data frame from long to wide with slim terms separated by commas
+gene_slims_summry_cc <- gene_slims %>% dplyr::group_by(gene) %>% dplyr::summarise(GO_slim_CC = toString(Term)) 
+#convert commas to semi colons
+gene_slims_summry_cc$GO_slim_CC <- gsub(",",";",gene_slims_summry_cc$GO_slim_CC)
+
+#do the same for MF
+cores=detectCores()
+cl <- makeCluster(cores[1]-1) #not to overload your computer
+registerDoParallel(cl)
+
+gene_slim <- foreach(i=1:length(Gene.GO.IDs.clean$gene), .combine=rbind, .packages = c("GSEABase", "topGO")) %dopar% {
+    print(i)
+  if(!is.na(Gene.GO.IDs.clean$GO.IDs[i])){
+    GO_IDs <- unlist(strsplit(Gene.GO.IDs.clean$GO.IDs[i], ";"))
+    GO_collection <- GOCollection(GO_IDs)
+    slims_mf <- data.frame(goSlim(GO_collection, slim, "MF"))
+    slims_mf$gene <- Gene.GO.IDs.clean$gene[i]
+    slims_mf <- slims_mf[which(slims_mf$Count!=0),]
+  }
+}
+stopCluster(cl)
+#reformat data frame from long to wide with slim terms separated by commas
+gene_slims_summry_mf <- gene_slims %>% dplyr::group_by(gene) %>% dplyr::summarise(GO_slim_MF = toString(Term)) 
+#convert commas to semi colons
+gene_slims_summry_mf$GO_slim_MF <- gsub(",",";",gene_slims_summry_mf$GO_slim_MF)
+#merge GO slim tables from different categories together
+gene_slims_summry <- merge(gene_slims_summry_bp, gene_slims_summry_cc, by = "gene", all = T)
+gene_slims_summry <- merge(gene_slims_summry, gene_slims_summry_mf, by = "gene", all = T)
+```
+
+#merge back with gene annotation table
+```{r}
+all_GO_slim <- merge(Genes,gene_slims_summry, by = "gene" , all = T)
+all_GO_slim <- merge(all_GO_slim, Gene.GO.IDs.clean, by = "gene", all = T)
+```
+
+
+#write out file
+```{r}
+write.table(all_GO_slim, "../data/Genome/Mcav_annotation_gene_slims.tab", sep = "\t", quote = F, row.names = F)
+all_GO_slim <- read.table("../data/Genome/Mcav_annotation_gene_slims.tab", sep = "\t")
+```
+
+
+```{r}
+GoSlims <- read.csv("../data/Genome/GO-GOslim.sorted", header=FALSE, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)
+colnames(GoSlims) <- c("GO.IDs", "GO.Term", "GO.Slim.Term", "Cat") #rename columns
+Gene.GO.IDs.slims <- merge(Gene.GO.IDs, GoSlims, by="GO.IDs", all = TRUE)
+Gene.GO.IDs.slims <- Gene.GO.IDs.slims[-1,]
+
+```
+
+
+## Enrichment evaluation
+```{r}
+####General comparison two-way model####
+##### GO and GO.Slim enrichment of DMGs Sym #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(sym_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+enriched.GO.05.symb <- GO.wall[which(GO.wall$over_represented_pvalue<.05),]
+write.csv(enriched.GO.05.symb[which(enriched.GO.05.symb$ontology =="MF"),] , file = "../output/MF_Sig_Enriched_GO.05_symb_DMGs.csv")
+write.csv(enriched.GO.05.symb[which(enriched.GO.05.symb$ontology =="CC"),] , file = "../output/CC_Sig_Enriched_GO.05_symb_DMGs.csv")
+write.csv(enriched.GO.05.symb[which(enriched.GO.05.symb$ontology =="BP"),] , file = "../output/BP_Sig_Enriched_GO.05_symb_DMGs.csv")
+#Find enriched GO.slim terms,
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+#How many enriched GO terms do we have
+class(GO.slim.wall)
+head(GO.slim.wall)
+tail(GO.slim.wall)
+nrow(GO.slim.wall)
+GOslim.Sym <- GO.slim.wall[order(GO.slim.wall$over_represented_pvalue),]
+write.csv(GOslim.Sym , file = "../output/GOslim_Sym.csv")
+sig.GOslim.Sym <- GOslim.Sym %>%
+  filter(over_represented_pvalue <0.05)
+
+##### GO enrichment of DMGs trt2 #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(trt_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+enriched.GO.05.temp <- GO.wall[which(GO.wall$over_represented_pvalue<.05),]
+write.csv(enriched.GO.05.temp[which(enriched.GO.05.temp$ontology =="MF"),] , file = "../output/MF_Sig_Enriched_GO.05_temp_DMGs.csv")
+write.csv(enriched.GO.05.temp[which(enriched.GO.05.temp$ontology =="CC"),] , file = "../output/CC_Sig_Enriched_GO.05_temp_DMGs.csv")
+write.csv(enriched.GO.05.temp[which(enriched.GO.05.temp$ontology =="BP"),] , file = "../output/BP_Sig_Enriched_GO.05_temp_DMGs.csv")
+#Find enriched GO.slim terms,
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+#How many enriched GO terms do we have
+class(GO.slim.wall)
+head(GO.slim.wall)
+tail(GO.slim.wall)
+nrow(GO.slim.wall)
+GOslim.trt <- GO.slim.wall[order(GO.slim.wall$over_represented_pvalue),]
+write.csv(GOslim.trt , file = "../output/GOslim_trt.csv")
+sig.GOslim.trt <- GOslim.trt %>%
+  filter(over_represented_pvalue <0.05)
+
+##### GO enrichment of DMGs Sym:trt #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(inter_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+enriched.GO.05.Inter <- GO.wall[which(GO.wall$over_represented_pvalue<.05),]
+write.csv(enriched.GO.05.Inter[which(enriched.GO.05.Inter$ontology =="MF"),] , file = "../output/MF_Sig_Enriched_GO.05_Inter_DMGs.csv")
+write.csv(enriched.GO.05.Inter[which(enriched.GO.05.Inter$ontology =="CC"),] , file = "../output/CC_Sig_Enriched_GO.05_Inter_DMGs.csv")
+write.csv(enriched.GO.05.Inter[which(enriched.GO.05.Inter$ontology =="BP"),] , file = "../output/BP_Sig_Enriched_GO.05_Inter_DMGs.csv")
+#Find enriched GO.slim terms,
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+#How many enriched GO terms do we have
+class(GO.slim.wall)
+head(GO.slim.wall)
+tail(GO.slim.wall)
+nrow(GO.slim.wall)
+GOslim.Inter <- GO.slim.wall[order(GO.slim.wall$over_represented_pvalue),]
+write.csv(GOslim.Inter , file = "../output/GOslim_inter.csv")
+sig.GOslim.Inter <- GOslim.Inter %>%
+  filter(over_represented_pvalue <0.05)
+
+####individual comp####
+##### GO enrichment of Cc_Dc #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(Ctrol_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+Cc_Dc_GO <- GO.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Cc.vs.Dc") %>%
+  arrange(ontology)
+Cc_Dc_GO <- Cc_Dc_GO[,c(7,6,4,5,2)]
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+Cc_Dc_GO.slim <- GO.slim.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Cc.vs.Dc")
+Cc_Dc_GO.slim <- Cc_Dc_GO.slim[,c(6,4,1,2)]
+
+##### GO enrichment of Ch_Dh #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(Heated_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+Ch_Dh_GO <- GO.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Ch.vs.Dh") %>%
+  arrange(ontology)
+Ch_Dh_GO <- Ch_Dh_GO[,c(7,6,4,5,2)]
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+Ch_Dh_GO.slim <- GO.slim.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Ch.vs.Dh")
+Ch_Dh_GO.slim <- Ch_Dh_GO.slim[,c(6,4,1,2)]
+
+##### GO enrichment of Cc_Ch #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(SymbC_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+Cc_Ch_GO <- GO.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Cc.vs.Ch") %>%
+  arrange(ontology)
+Cc_Ch_GO <- Cc_Ch_GO[,c(7,6,4,5,2)]
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+Cc_Ch_GO.slim <- GO.slim.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Cc.vs.Ch")
+Cc_Ch_GO.slim <- Cc_Ch_GO.slim[,c(6,4,1,2)]
+
+##### GO enrichment of Cc_Dc #####
+ALL<-as.data.frame(MD.ALL.Genes) #set the all gene list
+colnames(ALL) <-c("gene")
+DMG <- as.character(SymbD_sig_genes$gene) #set the enrichment test list
+LENGTH <-cbind(Genes$gene,Genes$stop-Genes$start) #reads in a list of gene lengths
+colnames(LENGTH) <-c("gene", "length") #name columns
+LENGTH <- merge(LENGTH, ALL, by="gene") #merge gene names and length
+GOAL <- merge(ALL, Gene.GO.IDs.slims,by="gene", all=T) #merge GO, ID
+GOAL$GO.Slim.Term[is.na(GOAL$GO.Slim.Term)] <- "unknown" #list NA as unknown
+splitted <- strsplit(as.character(GOAL$GO.IDs), "; ") #slit into multiple GO ids
+GO.terms <- data.frame(v1 = rep.int(GOAL$gene, sapply(splitted, length)), v2 = unlist(splitted)) #list all genes with each of their GO terms in a single row 
+GO.slimmed.terms <-GOAL[,c(1,4)]
+#change contig lists to vectors
+ALL.vector <-c(t(ALL))
+temp <- "Mcavernosa04235" # Exclude gene ID not included in the revised GFF file
+ALL.vector <- setdiff(ALL.vector, temp)
+DMG.vector <-c(t(DMG))
+ID.vector <- LENGTH$gene
+LENGTH.vector <-LENGTH$length
+LENGTH.vector <- as.numeric(LENGTH.vector)
+gene.vector=as.integer(ALL.vector%in%DMG.vector) #Construct new vector with 1 for DEG and 0 for others
+names(gene.vector)=ALL.vector #set names
+DEG.pwf<-nullp(gene.vector, ID.vector, bias.data=LENGTH.vector) #weight vector by length of gene
+#Find enriched GO terms, 
+GO.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=TRUE)
+Dc_Dh_GO <- GO.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Dc.vs.Dh") %>%
+  arrange(ontology)
+Dc_Dh_GO <- Dc_Dh_GO[,c(7,6,4,5,2)]
+GO.slim.wall<-goseq(DEG.pwf, ID.vector, gene2cat=GO.slimmed.terms, test.cats=c("GO:CC", "GO:BP", "GO:MF"), method="Wallenius", use_genes_without_cat=FALSE)
+colnames(GO.slim.wall)[1] <- "GO.Slim.Term"
+slim.cats <- Gene.GO.IDs.slims[,4:5]
+slim.cats <- slim.cats[!duplicated(slim.cats$GO.Slim.Term), ]
+GO.slim.wall <- left_join(GO.slim.wall, slim.cats)
+Dc_Dh_GO.slim <- GO.slim.wall %>%
+  filter(over_represented_pvalue <0.05) %>%
+  unite("genes", numDEInCat, numInCat, sep = "/") %>%
+  mutate(contrast = "Dc.vs.Dh")
+Dc_Dh_GO.slim <- Dc_Dh_GO.slim[,c(6,4,1,2)]
+
+### Write summary tables maybe Supplemental table with all GO & GO.slim results
+
+allGO <- bind_rows(Cc_Dc_GO, Cc_Ch_GO, Ch_Dh_GO, Dc_Dh_GO) %>%
+  arrange(contrast, ontology)
+write_csv(allGO, path = "../output/all.sig.GO.csv")
+
+allGO.slim <- bind_rows(Cc_Dc_GO.slim, Cc_Ch_GO.slim, Ch_Dh_GO.slim, Dc_Dh_GO.slim) %>%
+  arrange(contrast)
+write_csv(allGO.slim, path = "../output/all.sig.GO.slim.csv")
+
+```
+
+
+#KOG enrichment analysis
+Using methdiff values, we can analyze which KOG classifications are up- or down-regulated within each colony, and across all three colonies together.
+```{r}
+theme_custom <- function() {
+  theme_bw(base_size = 10) %+replace%    #, base_family = "Arial"
+    theme(
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(), 
+      panel.background = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA),
+      legend.background = element_rect(fill = NA, colour = NA),
+      axis.text.x = element_text(angle=45, hjust=1, vjust = 1)#,
+      #legend.title = element_text(size = 8), 
+      #legend.text = element_text(size = 7)
+    )
+}
+
+#Calculate log2fold for each comparizon
+### Cc.Dc
+meth_fold_Ctrol <- meth_table.means_Ctrol %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Cc))
+meth_fold_Ctrol <- data.frame(meth_fold_Ctrol[,c(1,4)])
+###Ch.Dh
+meth_fold_Heated <- meth_table.means_Heated %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dh/Ch))
+meth_fold_Heated <- data.frame(meth_fold_Heated[,c(1,4)])
+###Cc.Ch
+meth_fold_SymbC <- meth_table.means_SymbC %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Cc/Ch))
+meth_fold_SymbC <- data.frame(meth_fold_SymbC[,c(1,4)])
+###Dc.Dh
+meth_fold_SymbD <- meth_table.means_SymbD %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Dh))
+meth_fold_SymbD <- data.frame(meth_fold_SymbD[,c(1,4)])
+
+# Read gene2kog file created by Ross
+gene2kog <- read.csv("../data/Genome/Mcavernosa_iso2kog.tab", header=F, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)%>%
+   filter(!V2 == "")
+colnames(gene2kog) <- c("gene", "KOG_term")
+
+#Run KOG for each comparison
+KOG_ctrol <- kog.mwu(meth_fold_Ctrol, gene2kog)
+KOG_Heated <- kog.mwu(meth_fold_Heated, gene2kog)
+KOG_SymbC <- kog.mwu(meth_fold_SymbC, gene2kog)
+KOG_SymbD <- kog.mwu(meth_fold_SymbD, gene2kog)
+
+KOG_ctrol$contrast <- c("Cc.vs.Dc")
+KOG_Heated$contrast <- c("Ch.vs.Dh")
+KOG_SymbC$contrast <- c("Cc.vs.Ch")
+KOG_SymbD$contrast <- c("Dc.vs.Dh")
+
+
+
+ktable <- makeDeltaRanksTable(list("Ch.vs.Cc" = KOG_SymbC,"Dc.vs.Cc" = KOG_ctrol,  
+                                     "Dh.vs.Dc" = KOG_SymbD, "Dh.vs.Ch" = KOG_Heated)) 
+ktable <- ktable[order(row.names(ktable)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_all.genets <- pheatmap(as.matrix(ktable), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           color = color)
+ggsave(filename = "../output/suppl/KOG_all.genets.png", KOG_HM_all.genets, width = 5.5, height = 4)
+
+# exploring correlations between contrasts
+
+KOG_corr <- GGally::ggpairs(ktable, lower = list(continuous = "smooth"), diag = NULL)
+
+ggsave(filename = "../output/other/KOG_correlation.png", KOG_corr)
+
+fig_pannelB1 <- ktable %>%
+  rownames_to_column("kog") %>%
+  gather(contrast, value, -kog, -Ch.vs.Cc) %>%
+  filter(contrast %in% c("Dh.vs.Dc", "Dc.vs.Cc")) %>%
+  mutate(contrast = factor(contrast, levels = c("Dh.vs.Dc", "Dc.vs.Cc"),
+                           labels = c(expression("D"[H]~"vs."~"D"[C]), expression("D"[C]~"vs."~"C"[C])))) %>%
+  ggplot(aes(x = Ch.vs.Cc, y = value)) +
+  facet_grid(contrast ~ ., labeller = "label_parsed") +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_cor(aes(label = ..r.label..), size = 2) +
+  theme_custom() +
+  labs(x = expression("C"[H]~"vs."~"C"[C]~"KOG delta ranks"), y = "KOG delta ranks")
+
+ggsave(plot = last_plot(), filename = "../output/suppl/KOG_Fig.png", width = 60, height = 100, units = "mm")
+
+fig_pannelB2 <- ktable %>%
+  rownames_to_column("kog") %>%
+  gather(contrast, value, -kog, -Dh.vs.Dc) %>%
+  filter(contrast %in% c("Ch.vs.Cc", "Dc.vs.Cc")) %>%
+  mutate(contrast = factor(contrast, levels = c("Ch.vs.Cc", "Dc.vs.Cc"),
+                           labels = c(expression("C"[H]~"vs."~"C"[C]), expression("D"[C]~"vs."~"C"[C])))) %>%
+  ggplot(aes(x = Dh.vs.Dc, y = value)) +
+  facet_grid(contrast ~ ., labeller = "label_parsed") +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_cor(aes(label = ..r.label..), size = 2) +
+  theme_custom() +
+  labs(x = expression("D"[H]~"vs."~"D"[C]~"KOG delta ranks"), y = "KOG delta ranks")
+
+ggsave(plot = last_plot(), filename = "../output/suppl/KOG_figB2.png", width = 60, height = 100, units = "mm")
+
+kogtable2 <- ktable 
+colnames(kogtable2) <- c("Ch.Cc","Dc.Cc","Dh.Dc","Dh.Ch")
+
+comparisons <- c("~ Ch.Cc + Dc.Cc", "~ Ch.Cc + Dc.Ch", "~ Ch.Cc + Dh.Cc", "~ Ch.Cc + Dh.Ch", "~ Ch.Cc + Dh.Dc",
+                 "~ Dc.Cc + Dc.Ch", "~ Dc.Cc + Dh.Cc", "~ Dc.Cc + Dh.Ch", "~ Dc.Cc + Dh.Dc",
+                 "~ Dc.Ch + Dh.Cc", "~ Dc.Ch + Dh.Ch", "~ Dc.Ch + Dh.Dc",
+                 "~ Dh.Cc + Dh.Ch", "~ Dh.Cc + Dh.Dc",
+                 "~ Dh.Ch + Dh.Dc")
+
+tibble(comparison = comparisons) %>%
+  filter(!grepl("Dc.Ch|Cc.Dh|Dh.Cc", comparison)) %>%
+  mutate(cor = map(comparison, ~ cor.test(as.formula(.), data = kogtable2) %>% broom::tidy())) %>%
+  unnest(cols = c(cor)) %>%
+  mutate(samevars = map_lgl(comparison, ~ any(table(str_extract_all(., "C.|D.")) > 1)),
+         nocor = pmap_lgl(list(samevars, conf.low, conf.high), function(x, y, z) {
+           ifelse(x, !(y < - 0.5 | z > 0.5), between(0, y, z))}))
+
+```
+
+## KOG_MWU for Genet 1
+```{r}
+#Calculate log2fold for each comparizon
+### Cc.Dc
+G1_meth_fold_Ctrol <- G1_meth_table.means_Ctrol %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Cc))
+G1_meth_fold_Ctrol <- data.frame(G1_meth_fold_Ctrol[,c(1,4)])
+###Ch.Dh
+G1_meth_fold_Heated <- G1_meth_table.means_Heated %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dh/Ch))
+G1_meth_fold_Heated <- data.frame(G1_meth_fold_Heated[,c(1,4)])
+###Cc.Ch
+G1_meth_fold_SymbC <- G1_meth_table.means_SymbC %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Cc/Ch))
+G1_meth_fold_SymbC <- data.frame(G1_meth_fold_SymbC[,c(1,4)])
+###Dc.Dh
+G1_meth_fold_SymbD <- G1_meth_table.means_SymbD %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Dh))
+G1_meth_fold_SymbD <- data.frame(G1_meth_fold_SymbD[,c(1,4)])
+
+# Read gene2kog file created by Ross
+gene2kog <- read.csv("../data/Genome/Mcavernosa_iso2kog.tab", header=F, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)%>%
+   filter(!V2 == "")
+colnames(gene2kog) <- c("gene", "KOG_term")
+
+#Run KOG for each comparison
+KOG_G1_ctrol <- kog.mwu(G1_meth_fold_Ctrol, gene2kog)
+KOG_G1_Heated <- kog.mwu(G1_meth_fold_Heated, gene2kog)
+KOG_G1_SymbC <- kog.mwu(G1_meth_fold_SymbC, gene2kog)
+KOG_G1_SymbD <- kog.mwu(G1_meth_fold_SymbD, gene2kog)
+
+KOG_G1_ctrol$contrast <- c("Cc.vs.Dc")
+KOG_G1_Heated$contrast <- c("Ch.vs.Dh")
+KOG_G1_SymbC$contrast <- c("Cc.vs.Ch")
+KOG_G1_SymbD$contrast <- c("Dc.vs.Dh")
+
+
+
+ktable_G1 <- makeDeltaRanksTable(list("Ch.vs.Cc" = KOG_G1_SymbC,"Dc.vs.Cc" = KOG_G1_ctrol,  
+                                     "Dh.vs.Dc" = KOG_G1_SymbD, "Dh.vs.Ch" = KOG_G1_Heated)) 
+ktable_G1 <- ktable_G1[order(row.names(ktable_G1)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_genet1 <- pheatmap(as.matrix(ktable_G1), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           color = color)
+ggsave(filename = "../output/other/KOG_genet1.png", KOG_HM_genet1, width = 5.5, height = 4)
+
+```
+## KOG_MWU for Genet 2
+```{r}
+#Calculate log2fold for each comparizon
+### Cc.Dc
+G2_meth_fold_Ctrol <- G2_meth_table.means_Ctrol %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Cc))
+G2_meth_fold_Ctrol <- data.frame(G2_meth_fold_Ctrol[,c(1,4)])
+###Ch.Dh
+G2_meth_fold_Heated <- G2_meth_table.means_Heated %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dh/Ch))
+G2_meth_fold_Heated <- data.frame(G2_meth_fold_Heated[,c(1,4)])
+###Cc.Ch
+G2_meth_fold_SymbC <- G2_meth_table.means_SymbC %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Cc/Ch))
+G2_meth_fold_SymbC <- data.frame(G2_meth_fold_SymbC[,c(1,4)])
+###Dc.Dh
+G2_meth_fold_SymbD <- G2_meth_table.means_SymbD %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Dh))
+G2_meth_fold_SymbD <- data.frame(G2_meth_fold_SymbD[,c(1,4)])
+
+# Read gene2kog file created by Ross
+gene2kog <- read.csv("../data/Genome/Mcavernosa_iso2kog.tab", header=F, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)%>%
+   filter(!V2 == "")
+colnames(gene2kog) <- c("gene", "KOG_term")
+
+#Run KOG for each comparison
+KOG_G2_ctrol <- kog.mwu(G2_meth_fold_Ctrol, gene2kog)
+KOG_G2_Heated <- kog.mwu(G2_meth_fold_Heated, gene2kog)
+KOG_G2_SymbC <- kog.mwu(G2_meth_fold_SymbC, gene2kog)
+KOG_G2_SymbD <- kog.mwu(G2_meth_fold_SymbD, gene2kog)
+
+KOG_G2_ctrol$contrast <- c("Cc.vs.Dc")
+KOG_G2_Heated$contrast <- c("Ch.vs.Dh")
+KOG_G2_SymbC$contrast <- c("Cc.vs.Ch")
+KOG_G2_SymbD$contrast <- c("Dc.vs.Dh")
+
+
+
+ktable_G2 <- makeDeltaRanksTable(list("Ch.vs.Cc" = KOG_G2_SymbC,"Dc.vs.Cc" = KOG_G2_ctrol,  
+                                     "Dh.vs.Dc" = KOG_G2_SymbD, "Dh.vs.Ch" = KOG_G2_Heated)) 
+ktable_G2 <- ktable_G2[order(row.names(ktable_G2)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_genet2 <- pheatmap(as.matrix(ktable_G2), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           color = color)
+ggsave(filename = "../output/other/KOG_genet2.png", KOG_HM_genet2, width = 5.5, height = 4)
+
+```
+## KOG_MWU for Genet 3
+```{r}
+#Calculate log2fold for each comparizon
+### Cc.Dc
+G3_meth_fold_Ctrol <- G3_meth_table.means_Ctrol %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Cc))
+G3_meth_fold_Ctrol <- data.frame(G3_meth_fold_Ctrol[,c(1,4)])
+###Ch.Dh
+G3_meth_fold_Heated <- G3_meth_table.means_Heated %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dh/Ch))
+G3_meth_fold_Heated <- data.frame(G3_meth_fold_Heated[,c(1,4)])
+###Cc.Ch
+G3_meth_fold_SymbC <- G3_meth_table.means_SymbC %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Cc/Ch))
+G3_meth_fold_SymbC <- data.frame(G3_meth_fold_SymbC[,c(1,4)])
+###Dc.Dh
+G3_meth_fold_SymbD <- G3_meth_table.means_SymbD %>% 
+  pivot_wider(names_from = treatment, values_from = per.meth)%>%
+  mutate(log2fold = log2(Dc/Dh))
+G3_meth_fold_SymbD <- data.frame(G3_meth_fold_SymbD[,c(1,4)])
+
+# Read gene2kog file created by Ross
+gene2kog <- read.csv("../data/Genome/Mcavernosa_iso2kog.tab", header=F, sep="\t", na.string="NA", stringsAsFactors = F, skip=0)%>%
+   filter(!V2 == "")
+colnames(gene2kog) <- c("gene", "KOG_term")
+
+#Run KOG for each comparison
+KOG_G3_ctrol <- kog.mwu(G3_meth_fold_Ctrol, gene2kog)
+KOG_G3_Heated <- kog.mwu(G3_meth_fold_Heated, gene2kog)
+KOG_G3_SymbC <- kog.mwu(G3_meth_fold_SymbC, gene2kog)
+KOG_G3_SymbD <- kog.mwu(G3_meth_fold_SymbD, gene2kog)
+
+KOG_G3_ctrol$contrast <- c("Cc.vs.Dc")
+KOG_G3_Heated$contrast <- c("Ch.vs.Dh")
+KOG_G3_SymbC$contrast <- c("Cc.vs.Ch")
+KOG_G3_SymbD$contrast <- c("Dc.vs.Dh")
+
+
+
+ktable_G3 <- makeDeltaRanksTable(list("Ch.vs.Cc" = KOG_G3_SymbC,"Dc.vs.Cc" = KOG_G3_ctrol,  
+                                     "Dh.vs.Dc" = KOG_G3_SymbD, "Dh.vs.Ch" = KOG_G3_Heated)) 
+ktable_G3 <- ktable_G3[order(row.names(ktable_G3)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_genet3 <- pheatmap(as.matrix(ktable_G3), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           color = color)
+ggsave(filename = "../output/other/KOG_genet3.png", KOG_HM_genet3, width = 5.5, height = 4)
+
+```
+
+#Genets comparison for each contrast
+```{r}
+
+ktable_DcCc <- makeDeltaRanksTable(list("genet 1" = KOG_G1_ctrol,"genet 2" = KOG_G2_ctrol,  
+                                     "genet 3" = KOG_G3_ctrol, "all genets" = KOG_ctrol)) 
+ktable_DcCc <- ktable_DcCc[order(row.names(ktable_DcCc)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_ctrol <- pheatmap(as.matrix(ktable_DcCc), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           main = "                     D-control vs. C-control",
+           color = color)
+ggsave(filename = "../output/other/KOG_DcCc_byGenet.png", KOG_HM_ctrol, width = 5.5, height = 4)
+
+###
+ktable_DhCh <- makeDeltaRanksTable(list("genet 1" = KOG_G1_Heated,"genet 2" = KOG_G2_Heated,  
+                                     "genet 3" = KOG_G3_Heated, "all genets" = KOG_Heated)) 
+ktable_DhCh <- ktable_DhCh[order(row.names(ktable_DhCh)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_Heated <- pheatmap(as.matrix(ktable_DhCh), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           main = "                     D-heated vs. C-heated",
+           color = color)
+ggsave(filename = "../output/other/KOG_DhCh_byGenet.png", KOG_HM_Heated, width = 5.5, height = 4)
+
+ktable_ChCc <- makeDeltaRanksTable(list("genet 1" = KOG_G1_SymbC,"genet 2" = KOG_G2_SymbC,  
+                                     "genet 3" = KOG_G3_SymbC, "all genets" = KOG_SymbC)) 
+ktable_ChCc <- ktable_ChCc[order(row.names(ktable_ChCc)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_SymbC <- pheatmap(as.matrix(ktable_ChCc), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           main = "                     C-heated vs. C-control",
+           color = color)
+ggsave(filename = "../output/other/KOG_ChCc_byGenet.png", KOG_HM_SymbC, width = 5.5, height = 4)
+
+ktable_DhDc <- makeDeltaRanksTable(list("genet 1" = KOG_G1_SymbD,"genet 2" = KOG_G2_SymbD,  
+                                     "genet 3" = KOG_G3_SymbD, "all genets" = KOG_SymbD)) 
+ktable_DhDc <- ktable_DhDc[order(row.names(ktable_DhDc)), ]
+color = colorRampPalette(rev(c("chocolate1","#FEE090","grey10", "cyan3","cyan")))(100)
+
+# Making a heatmap with hierarchical clustering trees: 
+
+KOG_HM_SymbD <- pheatmap(as.matrix(ktable_DhDc), fontsize_number = 8,
+           cluster_cols = FALSE, cluster_rows = FALSE,
+           treeheight_row = 15, treeheight_col = 15,
+           border_color = "white", scale = "none",
+           main = "                     D-heated vs. D-control",
+           color = color)
+ggsave(filename = "../output/other/KOG_DhDc_byGenet.png", KOG_HM_SymbD, width = 5.5, height = 4)
+```
+

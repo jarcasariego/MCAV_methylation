@@ -1,0 +1,472 @@
+#!/bin/bash
+
+### Merge and correct by 1% error in C calling (I use some accessory python code <code/python code) 
+
+# Merge covs 
+
+python3 merge_bismark_cov.py -v *.cov > all.merged.cov 
+
+#Filter misscalled Cs (details can be found in the description of the python file)
+
+python3 filter_miscalled_Cs.py all.merged.cov > all.bona_fide_meth_pos.cov
+
+#Annotate corrected positions for Fig 1
+
+python3 annotate_bismark_cov.py ${genome_folder}/Mcavernosa_July2018.fasta \
+${annotation_folder}/Mcavernosa.maker.coding.gff3 all.bona_fide_meth_pos.cov > all.bona_fide_meth_pos.annot.cov
+
+### Limit to 5x coverage unannotated file
+
+awk '{if ($5+$6 >= 5) { print $1, $2-1, $3, $4, $5+$6}}' all.bona_fide_meth_pos.annot.cov \
+> all.filt.annot.merged.cov
+
+# Plot Fig 1B
+
+python3 plot_meth_levels.genomic_context.py 
+
+
+### Limit to 5x coverage unannotated file
+
+awk '{if ($5+$6 >= 5) { print $1, $2-1, $3, $4, $5+$6}}' all.bona_fide_meth_pos.cov \
+> 2021-01-11-All-5x-CpGs.bedgraph
+
+#Replace delimiters to save .bedgraph as .csv 
+
+awk '{print $1","$2","$3","$4 }' 2021-01-11-All-5x-CpGs.bedgraph \
+> 2021-01-11-All-5x-CpGs.csv
+
+### Characterize methylation levels for loci: Methylated (50% methylation and above);Sparsely methylated (10-50% methylated);Unmethylated (10% methylation and below)
+
+# Methylated loci
+awk '{if ($4 >= 50) { print $1, $2, $3, $4 }}' 2021-01-11-All-5x-CpGs.bedgraph \
+> 2021-01-11-All-5x-CpGs_methylated.bedgraph
+
+# Sparsely methylated loci
+awk  '{if ($4 < 50) { print $1, $2, $3, $4}}'  2021-01-11-All-5x-CpGs.bedgraph \
+| awk '{if ($4 > 10) { print $1, $2, $3, $4 }}' > 2021-01-11-All-5x-CpGs_sparse_meth.bedgraph
+
+# Unmethylated loci
+awk '{if ($4 <= 10) { print $1, $2, $3, $4 }}' 2021-01-11-All-5x-CpGs.bedgraph \
+> 2021-01-11-All-5x-CpGs_unmethylated.bedgraph
+
+# Create bed files and csv 
+
+for f in *.bedgraph
+do
+awk '{print $1"\t"$2"\t"$3}' ${f} \
+> $(basename ${f%bedgraph}bed)
+done
+
+for f in *.bedgraph
+awk '{print $1","$2","$3","$4 }' ${f} \
+> $(basename ${f%bedgraph}csv)
+done
+
+## Create bed filed with all CpGs in the genome using a CpG report resulting from coverage2cytosine 
+
+ awk '{print $1"\t"$2"\t"$2}' <any>_CpG_report > Mcav_genome_CpG_track.bed
+
+## Determine feature overlaps
+
+"annot_tracks = ../2021-01-08-Mcav_Genomic-feature-track_corrected" 
+
+#### Exons
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.exon.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs-Exon.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.exon.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs_methylated-Exon.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-Exon.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-Exon.txt
+
+#### Introns
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc \
+> 2021-01-11-All-5x-CpGs-Intron.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc  \
+> 2021-01-11-All-5x-CpGs_methylated-Intron.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc  \
+> 2021-01-11-All-5x-CpGs_sparse_meth-Intron.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc  \
+> 2021-01-11-All-5x-CpGs_unmethylated-Intron.txt
+
+#### Genes
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.gene.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs-gene.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.gene.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs_methylated-gene.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.gene.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-gene.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.gene.sorted_jarc.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-gene.txt
+
+#### Transposable elements (all)
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.TE_all.gff \
+> 2021-01-11-All-5x-CpGs-TE.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.TE_all.gff \
+> 2021-01-11-All-5x-CpGs_methylated-TE.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.TE_all.gff \
+> 2021-01-11-All-5x-CpGs_sparse_meth-TE.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.TE_all.gff \
+> 2021-01-11-All-5x-CpGs_unmethylated-TE.txt
+
+#### Intergenic regions
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intergenic_final_jarc.bed \
+> 2021-01-11-All-5x-CpGs-intergenic.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intergenic_final_jarc.bed \
+> 2021-01-11-All-5x-CpGs_methylated-intergenic.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intergenic_final_jarc.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-intergenic.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.intergenic_final_jarc.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-intergenic.txt
+
+### 3'UTR
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.3-UTR_jarc.bed \
+> 2021-01-11-All-5x-CpGs-3UTR.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.3-UTR_jarc.bed \
+> 2021-01-11-All-5x-CpGs_methylated-3UTR.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.3-UTR_jarc.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-3UTR.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.3-UTR_jarc.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-3UTR.txt
+
+### 5'UTR
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.5-UTR.bed \
+> 2021-01-11-All-5x-CpGs-5UTR.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.5-UTR.bed \
+> 2021-01-11-All-5x-CpGs_methylated-5UTR.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.5-UTR.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-5UTR.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.5-UTR.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-5UTR.txt
+
+### Putative promoters
+# All 5x CpGs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+> 2021-01-11-All-5x-CpGs-put_promoter.txt
+
+# Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+> 2021-01-11-All-5x-CpGs_methylated-put_promoter.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+> 2021-01-11-All-5x-CpGs_sparse_meth-put_promoter.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-wb \
+-a All-5x-CpGs-Unmethylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+> 2021-01-11-All-5x-CpGs_unmethylated-put_promoter.txt
+
+#### No overlaps
+# All 5x CpGs
+
+intersectBed \
+-v \
+-a All-5x-CpGs.bed \
+-b \
+${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+${annot_tracks}/Mcav.TE_all.gff \
+${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc.bed \
+> 2021-01-11-All-5x-CpGs-NoOverlaps.txt
+
+# Methylated loci
+
+intersectBed \
+-v \
+-a All-5x-CpGs-Methylated.bed \
+-b \
+${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+${annot_tracks}/Mcav.TE_all.gff \
+${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc \
+> 2021-01-11-All-5x-CpGs_methylated-NoOverlaps.txt
+
+# Sparsely-Methylated loci
+
+intersectBed \
+-v \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b \
+${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+${annot_tracks}/Mcav.TE_all.gff \
+${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc \
+> 2021-01-11-All-5x-CpGs_sparse_meth-NoOverlaps.txt
+
+# Unmethylated_Cs
+
+intersectBed \
+-v \
+-a All-5x-CpGs-Unmethylated.bed \
+-b \
+${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+${annot_tracks}/Mcav.GFFannotation.exon.sorted.jarc.bed \
+${annot_tracks}/Mcav.TE_all.gff \
+${annot_tracks}/Mcav.GFFannotation.intron_corrected_jarc \
+> 2021-01-11-All-5x-CpGs_unmethylated-NoOverlaps.txt
+
+## Create overlap tracks for all CpGs in the genome 
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.exon_sorted_jarc.bed \
+> 2021-01-11-All-genome-CpGs-Exon.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.gene_sorted_jarc.bed \
+> 2021-01-11-All-genome-CpGs-Gene.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.put_promoter_jarc.bed \
+> 2021-01-11-All-genome-CpGs-put_promoter.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.intron_final_jarc.bed \
+> 2021-01-11-All-genome-CpGs-intron.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.CDS.sorted_jarc.bed \
+> 2021-01-11-All-genome-CpGs-CDS.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.intergenic_final_jarc.bed \
+> 2021-01-11-All-genome-CpGs-intergenic.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.3-UTR_jarc.bed \
+> 2021-01-11-All-genome-CpGs-3-UTR.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.GFFannotation.5-UTR_jarc.bed \
+> 2021-01-11-All-genome-CpGs-5-UTR.txt
+
+intersectBed \
+-wb \
+-a Mcav_genome_CpG_track.bed\
+-b ${annot_tracks}/Mcav.TE_all_jarc.bed \
+> 2021-01-11-All-genome-CpGs-TE.txt
+
+### Intersect with concatenated binned features
+
+intersectBed \
+-a All-5x-CpGs.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.concat_all2Kbin.corected_uniq.bed \
+-wao \
+> 2021-01-11-All-5x-CpGs_feature.txt
+
+intersectBed \
+-a Mcav_genome_CpG_track.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.concat_all2Kbin.corected_uniq.bed \
+-wao \
+> 2021-01-27-All-CpG_feature.txt
+
+intersectBed \
+-a All-5x-CpGs-Methylated.bed  \
+-b ${annot_tracks}/Mcav.GFFannotation.concat_all2Kbin.corected_uniq.bed \
+-wao \
+> 2021-01-11-All-5x-CpGs_methylated_feature.txt
+
+intersectBed \
+-a All-5x-CpGs-Sparsely-Methylated.bed \
+-b ${annot_tracks}/Mcav.GFFannotation.concat_all2Kbin.corected_uniq.bed \
+-wao \
+> 2021-01-11-All-5x-CpGs_sparse_meth_feature.txt
+
+intersectBed \
+-a All-5x-CpGs-Unmethylated.bed  \
+-b ${annot_tracks}/Mcav.GFFannotation.concat_all2Kbin.corected_uniq.bed \
+-wao \
+> 2021-01-11-All-5x-CpGs_unmethylated_feature.txt

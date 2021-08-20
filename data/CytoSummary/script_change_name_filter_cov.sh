@@ -1,0 +1,25 @@
+#!/bin/bash
+mv 19185FL-01-01_S1_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-20-1_CpG.txt 
+mv 19185FL-01-02_S2_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-20-1_CpG.txt 
+mv 19185FL-01-03_S3_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-20-2_CpG.txt 
+mv 19185FL-01-04_S4_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-20-3_CpG.txt 
+mv 19185FL-01-05_S5_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-20-1_CpG.txt 
+mv 19185FL-01-06_S6_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-20-2_CpG.txt 
+mv 19185FL-01-07_S7_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CC-20-1_CpG.txt
+mv 19185FL-01-08_S8_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-20-2_CpG.txt
+mv 19185FL-01-09_S9_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-22-1_CpG.txt 
+mv 19185FL-01-10_S10_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-22-2_CpG.txt 
+mv 19185FL-01-11_S11_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CC-22-1_CpG.txt 
+mv 19185FL-01-12_S12_L001_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CC-22-2_CpG.txt 
+mv 19185FL-01-13_S13_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-22-1_CpG.txt
+mv 19185FL-01-14_S14_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-22-1_CpG.txt
+mv 19185FL-01-15_S15_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-22-2_CpG.txt
+mv 19185FL-01-16_S16_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-22-2_CpG.txt 
+mv 19185FL-01-17_S17_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-26-1_CpG.txt 
+mv 19185FL-01-18_S18_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CC-26-1_CpG.txt
+mv 19185FL-01-19_S19_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CH-26-2_CpG.txt
+mv 19185FL-01-20_S20_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt CC-26-2_CpG.txt
+mv 19185FL-01-21-index10_S22_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-26-1_CpG.txt
+mv 19185FL-01-21-index9_S21_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-26-1_CpG.txt
+mv 19185FL-01-22_S23_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BH-26-2_CpG_CpG.txt
+mv 19185FL-01-23_S24_L002_R1_001_val_1_bismark_bt2_pe..CpG_report.txt BC-26-2_CpG.txt

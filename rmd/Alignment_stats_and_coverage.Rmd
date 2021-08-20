@@ -1,0 +1,81 @@
+---
+title: "MultiQC_detailed"
+author: "Javier Rodriguez Casariego"
+date: "10/6/2020"
+output: html_document
+---
+
+load libraries
+```{r}
+library(dplyr)
+library(data.table)
+library(gtools)
+library(ggplot2)
+library(ggpubr)
+library(knitr)
+library(kableExtra)
+```
+
+read in data 
+```{r}
+#bismark alignment stats extracted from MultiQC with Shelly's code
+multi_bismark <- fread("../analyses/Alignment/Mcav_alignment_stats_1.2.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+#general trimming stats
+trim_multiqc <- fread("../analyses/Alignment/Mcav_trimming_stats.txt", header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+#CpG coverage distribution
+cov_dist <- read.csv("../analyses/Alignment/CpG_by_coverage_1.2.csv", header = TRUE, sep = "\t")
+
+```
+
+
+generate simplified table for manuscript main text
+```{r}
+multi_bismark_simp <- multi_bismark[,c("Sample","symb", "treatment","total_reads","no_alignments", "ambig_reads", "uniq_aligned_reads_no_discard", "dedup_reads")]
+#add raw reads column
+multi_bismark_simp <- merge(data.frame(unique(trim_multiqc[,c("Sample","symb","treatment", "r_processed")])), multi_bismark_simp, by = c("Sample","symb","treatment"))
+#remove sample column
+multi_bismark_simp$Sample <- NULL
+#rename columns
+colnames(multi_bismark_simp) <- c("symbiont", "treatment", "raw", "trimmed", "unaligned", "ambiguously aligned", "uniquely aligned", "uniquely aligned excluding duplicates")
+
+```
+
+## plot different stats
+
+```{r}
+#convert to long format
+multi_bismark_simp_stacked <- tidyr::gather(multi_bismark_simp, "category", "reads",3:8)
+#add ordered levels to the category column factors
+multi_bismark_simp_stacked$category <- factor(multi_bismark_simp_stacked$category, levels = c("raw", "trimmed", "unaligned", "ambiguously aligned", "uniquely aligned", "uniquely aligned excluding duplicates"))
+multi_bismark_simp_stacked$treatment <- gsub("c", "Control", multi_bismark_simp_stacked$treatment)
+multi_bismark_simp_stacked$treatment <- gsub("h", "Heated", multi_bismark_simp_stacked$treatment)
+#calculate mean and sd for plotting
+multi_bismark_simp_stacked_sumr <- multi_bismark_simp_stacked %>% group_by(symbiont, treatment, category) %>% summarise(mean= mean(reads), sd = sd(reads))
+#generate bar plot with each stat adjacent to one another, treatment on x, and average reads on Y, error bars sd and facetted by symbiont
+jpeg("../output/suppl/Mcav_mappingStat.jpg", width = 9, height= 4, units = "in", res = 300 )
+ggplot(multi_bismark_simp_stacked_sumr)+ geom_bar(aes(x = treatment, y = mean,fill = symbiont,alpha = category, group = category),stat = "identity", position = position_dodge(), color = "black") + 
+geom_errorbar(aes(x = treatment, ymin = mean-sd, ymax = mean+sd, group = category), width = 0.25,position=position_dodge(0.9), alpha = 1) + guides(color = guide_colorbar(order = 0), fill = guide_legend(order = 1)) + scale_alpha_manual(values=c(rev(seq(0.1,1, length.out = 6)))) + facet_wrap(~symbiont, scale = "free")+theme_bw()+ theme(legend.position="top",legend.title = element_text(size = 10),
+  legend.text = element_text(size = 8),axis.title.x=element_blank(),axis.text.x = element_text(face = "italic"), strip.background =element_rect(fill="white")) + scale_fill_manual(values =c("#93b16b","#E6550D","#31A354")) + ylab("reads (average)")
+dev.off()
+
+```
+CpG by coverage 
+```{r}
+cov_dist_simp <-cov_dist %>%
+  mutate(group = paste(symbiont, treatment, sep = ""))
+
+cov_dist_simp$treatment <- NULL
+cov_dist_simp$symbiont <- NULL
+
+colnames(cov_dist_simp) <- c("Sample", "coverage", "reads", "percent_genome", "treatment")
+
+cov_dist_simp$Sample <- NULL
+
+cov_dist_simp_summ <- cov_dist_simp %>% group_by(treatment, coverage) %>% summarise(mean= mean(percent_genome), sd = sd(percent_genome))
+
+jpeg("../output/suppl/Mcav_CpGcovX_treatment_avg.jpg", width = 4.5, height = 3, units = "in", res = 300)
+ggplot(cov_dist_simp, aes(x = coverage, y = reads, color = treatment)) + geom_smooth(aes(fill = treatment)) + scale_x_continuous(breaks = seq(0,100,10)) + scale_fill_manual(values = c("#93b16b", "#dbebc5", "#E6550D", "#e0a384")) + scale_color_manual(values = c("#93b16b", "#dbebc5", "#E6550D", "#e0a384")) + xlab("coverage (X)") + ylab("number of CpGs") + theme_bw() + theme(text = element_text(size=16))
+dev.off()
+
+```
+

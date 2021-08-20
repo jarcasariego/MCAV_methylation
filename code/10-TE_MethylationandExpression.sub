@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# here I use code developed by Dr. Yi Jin Liew (https://github.com/lyijin/smic_dna_meth) and modified to accomodate my data
+# All modified code is in <code/python code>
+
+###########################################
+##### TRANSPOSABLE ELEMENTS ANALYSIS ######
+###########################################
+
+### RepeatMarker OUT file => Mcavernosa_July2018.fasta
+
+###   METHYLATION   ###
+
+## Check methylation density per sample (# of methylated CpGs per repeat)
+
+python3 check_meth_density_in_repeats.per_type.py -v ../Mcavernosa_July2018.fasta 5x_filt_covs/*.cov
+
+## Check methylation level per sample (% Methylation)
+
+python3 check_meth_density_in_repeats.per_type.py -v ../Mcavernosa_July2018.fasta 5x_filt_covs/*.cov
+
+## Plot meth_density per treatment and methylation context. (Only CpG context was used for final figure)
+
+python3 plot_stacked_barchart.meth_density 
+
+## Statistical analyses were performed in Excel (see meth_density_in_repeats.xls, meth_density_vs_treat.xls, meth_level_vs_treat.txt)  
+
+###   EXPRESSION    ###
+
+## Check expression levels in repeats (# of methylated CpGs per repeat)
+
+python3 check_expr_in_repeats.per_type -v ../Mcavernosa_July2018.fasta depth.tsv_files/*_depth.tsv
+
+## Plot Expression level per treatment combination and repeat type
+
+python3 plot_stacked_barchart.expr
+
+## Statistical analyses were performed in Excel (see expr_vs_treat.xls) and R (see TE_Expression.R)

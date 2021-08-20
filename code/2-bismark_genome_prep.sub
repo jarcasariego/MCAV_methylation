@@ -1,0 +1,13 @@
+#!/bin/bash
+
+#bowtie2_dir="/home/applications/bowtie2/2.1.0/bin/"
+#samtools_dir="/home/applications/samtools/0.1.19/bin/"
+#genome_dir="/scratch/jrodr979/Mcavernosa_methylome/2020-08-17-Bismark-12--un/Bismark_Inputs"
+
+#Genome Preparation
+
+bismark_genome_preparation --path_to_aligner ${bowtie2_dir} --verbose /scratch/jrodr979/Mcavernosa_methylome/2020-08-17-Bismark-09--un/Bismark_Inputs/
+
+
+
+
